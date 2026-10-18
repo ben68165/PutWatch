@@ -41,12 +41,18 @@ class ConfigStore:
             except Exception as exc:
                 logger.error("Failed to parse config file %s: %s", self.path, exc)
 
-        # Allow environment variable PUTIO_TOKEN to seed token if not already configured
+        # Allow environment variables PUTIO_TOKEN and POLL_INTERVAL to seed config
         env_token = os.environ.get("PUTIO_TOKEN", "").strip()
+        env_interval = os.environ.get("POLL_INTERVAL", "").strip()
+        modified = False
         if env_token and not cfg.putio_token:
             cfg.putio_token = env_token
-            self._write(cfg)
-        elif not self.path.exists():
+            modified = True
+        if env_interval.isdigit() and not self.path.exists():
+            cfg.poll_interval_seconds = max(10, min(3600, int(env_interval)))
+            modified = True
+
+        if modified or not self.path.exists():
             self._write(cfg)
 
         return cfg
