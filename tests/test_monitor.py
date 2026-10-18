@@ -86,6 +86,70 @@ class TestTrackerMonitor(unittest.TestCase):
         self.assertTrue(ev_and_ready["should_cancel"])
         self.assertIn("AND", ev_and_ready["reason"])
 
+    def test_cancel_on_completed_and_keep_alive_protections(self) -> None:
+        from app.monitor import compute_keep_alive_protections
+
+        rule = TrackerRule(
+            tracker_id="tracker.private.org",
+            enabled=True,
+            cancel_on_completed=True,
+            keep_top_seeded_enabled=True,
+            keep_top_seeded_count=1,
+            top_seeded_metric="up_speed",
+            keep_largest_enabled=True,
+            keep_largest_count=1,
+            keep_alive_hours=48.0,  # 2 days = 172800s
+        )
+
+        t_fast = {
+            "id": 1,
+            "name": "Fast.Seeder",
+            "status": "SEEDING",
+            "up_speed": 500000,
+            "uploaded": 1000000,
+            "size": 1000,
+            "seconds_seeding": 3600,
+        }
+        t_large = {
+            "id": 2,
+            "name": "Huge.Pack",
+            "status": "SEEDING",
+            "up_speed": 100,
+            "uploaded": 500,
+            "size": 999999999,
+            "seconds_seeding": 3600,
+        }
+        t_normal = {
+            "id": 3,
+            "name": "Regular.Episode",
+            "status": "SEEDING",
+            "up_speed": 50,
+            "uploaded": 100,
+            "size": 500,
+            "seconds_seeding": 10,
+        }
+
+        protections = compute_keep_alive_protections([t_fast, t_large, t_normal], rule)
+        self.assertEqual(protections[1], "Top Seeded #1")
+        self.assertEqual(protections[2], "Largest Transfer #1")
+        self.assertNotIn(3, protections)
+
+        # Regular transfer should cancel immediately on completion
+        ev_normal = evaluate_transfer_against_rule(t_normal, rule, protections.get(3))
+        self.assertTrue(ev_normal["should_cancel"])
+
+        # Top Seeded #1 and Largest Transfer #1 are kept alive (< 48h)
+        ev_fast = evaluate_transfer_against_rule(t_fast, rule, protections.get(1))
+        self.assertFalse(ev_fast["should_cancel"])
+        self.assertTrue(ev_fast["protection_active"])
+
+        # Once Top Seeded #1 exceeds 48h (172800s), it is canceled
+        t_fast_expired = {**t_fast, "seconds_seeding": 180000}
+        ev_fast_expired = evaluate_transfer_against_rule(
+            t_fast_expired, rule, protections.get(1)
+        )
+        self.assertTrue(ev_fast_expired["should_cancel"])
+
 
 class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
     async def test_auto_discovery_and_cancellation(self) -> None:

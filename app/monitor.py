@@ -38,8 +38,13 @@ def _parse_putio_datetime(dt_str: Optional[str]) -> Optional[datetime]:
 
 def format_duration(seconds: float) -> str:
     secs = max(0, int(round(seconds)))
-    hours, rem = divmod(secs, 3600)
+    days, rem_d = divmod(secs, 86400)
+    hours, rem = divmod(rem_d, 3600)
     minutes, s = divmod(rem, 60)
+    if days > 0:
+        if minutes > 0 and days < 3:
+            return f"{days}d {hours:02d}h {minutes:02d}m"
+        return f"{days}d {hours:02d}h"
     if hours > 0:
         return f"{hours}h {minutes:02d}m"
     if minutes > 0:
@@ -51,15 +56,28 @@ def describe_rule(rule: TrackerRule) -> str:
     if not rule.enabled:
         return "Disabled"
     parts: List[str] = []
-    if rule.use_time_rule:
-        metric_label = "Seeding" if rule.time_metric == "seeding_time" else "Age"
-        parts.append(f"{metric_label} >= {format_duration(rule.max_time_minutes * 60)}")
-    if rule.use_ratio_rule:
-        parts.append(f"Ratio >= {rule.max_ratio:.2f}")
-    if not parts:
-        return "No thresholds selected"
+    if rule.cancel_on_completed:
+        parts.append("Cancel on Download Complete")
+    else:
+        if rule.use_time_rule:
+            metric_label = "Seeding" if rule.time_metric == "seeding_time" else "Age"
+            parts.append(f"{metric_label} >= {format_duration(rule.max_time_minutes * 60)}")
+        if rule.use_ratio_rule:
+            parts.append(f"Ratio >= {rule.max_ratio:.2f}")
+
     joiner = f" {rule.condition_operator} "
-    return joiner.join(parts)
+    base_str = joiner.join(parts) if parts else "Keep-Alive Only"
+
+    keep_parts: List[str] = []
+    if rule.keep_top_seeded_enabled:
+        keep_parts.append(f"Top {rule.keep_top_seeded_count} Seeded")
+    if rule.keep_largest_enabled:
+        keep_parts.append(f"Top {rule.keep_largest_count} Largest")
+    if keep_parts:
+        keep_dur = format_duration(rule.keep_alive_hours * 3600)
+        base_str += f" (Keep {' + '.join(keep_parts)} for {keep_dur})"
+
+    return base_str
 
 
 def find_matching_rule(
@@ -67,12 +85,6 @@ def find_matching_rule(
 ) -> Tuple[str, Optional[TrackerRule]]:
     """
     Given a transfer's extracted [(tracker_id, raw_url), ...], find the best matching TrackerRule.
-    Priority:
-      1. Exact match in config.trackers with enabled=True
-      2. Substring match in config.trackers with enabled=True
-      3. Exact match in config.trackers (even if disabled, for UI visibility)
-      4. Default fallback rule if enabled
-    Returns (primary_tracker_id, matched_rule_or_none).
     """
     primary_id = transfer_trackers[0][0] if transfer_trackers else "untracked"
 
@@ -95,7 +107,7 @@ def find_matching_rule(
     if config.default_rule and config.default_rule.enabled:
         return primary_id, config.default_rule
 
-    # 4. Exact match even if disabled (so UI shows which tracker config corresponds to it)
+    # 4. Exact match even if disabled (for UI visibility)
     for t_id, _ in transfer_trackers:
         if t_id in config.trackers:
             return t_id, config.trackers[t_id]
@@ -103,18 +115,94 @@ def find_matching_rule(
     return primary_id, None
 
 
+def compute_keep_alive_protections(
+    transfers_for_rule: List[Dict[str, Any]],
+    rule: TrackerRule,
+) -> Dict[int, str]:
+    """
+    For all active SEEDING/COMPLETED transfers matched to `rule`, determines which transfer IDs
+    qualify for extended keep-alive protection:
+      1. Top N Seeded transfers (`keep_top_seeded_enabled`, `keep_top_seeded_count`, `top_seeded_metric`)
+      2. Additionally, Top M Largest transfers (`keep_largest_enabled`, `keep_largest_count`)
+    Returns a map of {transfer_id: protection_label} (e.g. {101: 'Top Seeded #1', 102: 'Largest Size #1'}).
+    """
+    protections: Dict[int, str] = {}
+    if not rule or not rule.enabled:
+        return protections
+    if not rule.keep_top_seeded_enabled and not rule.keep_largest_enabled:
+        return protections
+
+    seeding_pool = [
+        t
+        for t in transfers_for_rule
+        if str(t.get("status") or "").upper() in ("SEEDING", "COMPLETED", "COMPLETING")
+    ]
+    if not seeding_pool:
+        return protections
+
+    # 1. Top N Seeded transfers
+    if rule.keep_top_seeded_enabled and rule.keep_top_seeded_count > 0:
+        metric = rule.top_seeded_metric or "up_speed"
+
+        def _seed_sort_key(t: Dict[str, Any]) -> Tuple[float, float, float, float, int]:
+            up_spd = float(t.get("up_speed") or 0.0)
+            uploaded = float(t.get("uploaded") or 0.0)
+            ratio = float(t.get("current_ratio") or 0.0)
+            size = float(t.get("size") or 0.0)
+            tid = int(t.get("id") or 0)
+            if metric == "uploaded":
+                return (uploaded, up_spd, ratio, size, -tid)
+            if metric == "ratio":
+                return (ratio, uploaded, up_spd, size, -tid)
+            # default 'up_speed': current upload speed, then total uploaded bytes, then ratio
+            return (up_spd, uploaded, ratio, size, -tid)
+
+        sorted_by_seed = sorted(seeding_pool, key=_seed_sort_key, reverse=True)
+        for idx, t in enumerate(sorted_by_seed[: rule.keep_top_seeded_count], start=1):
+            tid = int(t.get("id") or 0)
+            if tid:
+                protections[tid] = f"Top Seeded #{idx}"
+
+    # 2. Additionally keep Top M Largest transfers (among those not already in Top Seeded)
+    if rule.keep_largest_enabled and rule.keep_largest_count > 0:
+        remaining_pool = [
+            t for t in seeding_pool if int(t.get("id") or 0) not in protections
+        ]
+        sorted_by_size = sorted(
+            remaining_pool,
+            key=lambda t: (
+                float(t.get("size") or 0.0),
+                float(t.get("uploaded") or 0.0),
+                float(t.get("up_speed") or 0.0),
+                -int(t.get("id") or 0),
+            ),
+            reverse=True,
+        )
+        for idx, t in enumerate(sorted_by_size[: rule.keep_largest_count], start=1):
+            tid = int(t.get("id") or 0)
+            if tid:
+                protections[tid] = f"Largest Transfer #{idx}"
+
+    return protections
+
+
 def evaluate_transfer_against_rule(
-    transfer: Dict[str, Any], rule: Optional[TrackerRule]
+    transfer: Dict[str, Any],
+    rule: Optional[TrackerRule],
+    protection_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Evaluate a single Put.io transfer dict against a TrackerRule.
-    Returns evaluation metadata including progress percentages and whether it should be canceled.
+    Evaluate a single Put.io transfer dict against a TrackerRule, factoring in:
+      - Immediate cancellation upon download completion (`cancel_on_completed`)
+      - Time threshold (`use_time_rule`, `max_time_minutes`)
+      - Ratio threshold (`use_ratio_rule`, `max_ratio`)
+      - Combination logic (`OR` vs `AND`)
+      - Extended Keep-Alive protection for Top Seeded & Largest transfers (`protection_label`, `keep_alive_hours`)
     """
     status = str(transfer.get("status") or "UNKNOWN").upper()
     seeding_seconds = int(transfer.get("seconds_seeding") or 0)
     current_ratio = float(transfer.get("current_ratio") or 0.0)
 
-    # Calculate total age in seconds if created_at is present
     created_dt = _parse_putio_datetime(transfer.get("created_at"))
     now_dt = datetime.now(timezone.utc)
     age_seconds = (
@@ -131,6 +219,8 @@ def evaluate_transfer_against_rule(
             "eligible_status": False,
             "should_cancel": False,
             "reason": None,
+            "protection_label": None,
+            "protection_active": False,
             "time_progress_pct": 0.0,
             "ratio_progress_pct": 0.0,
             "remaining_seconds": None,
@@ -139,7 +229,6 @@ def evaluate_transfer_against_rule(
             "target_ratio": None,
         }
 
-    # Check if transfer status is eligible for rule evaluation
     seeding_or_done = status in ("SEEDING", "COMPLETED", "COMPLETING")
     eligible_status = seeding_or_done or bool(rule.include_downloading)
 
@@ -148,12 +237,17 @@ def evaluate_transfer_against_rule(
     )
     target_seconds = max(0.0, float(rule.max_time_minutes) * 60.0)
     target_ratio = max(0.0, float(rule.max_ratio))
+    keep_alive_target_seconds = max(0.0, float(rule.keep_alive_hours) * 3600.0)
 
     time_reached = False
     time_progress_pct = 0.0
     remaining_seconds: Optional[int] = None
 
-    if rule.use_time_rule:
+    if rule.cancel_on_completed:
+        time_reached = seeding_or_done
+        time_progress_pct = 100.0 if seeding_or_done else 0.0
+        remaining_seconds = 0 if seeding_or_done else None
+    elif rule.use_time_rule:
         if target_seconds <= 0:
             time_reached = True
             time_progress_pct = 100.0
@@ -177,21 +271,24 @@ def evaluate_transfer_against_rule(
                 100.0, round((current_ratio / target_ratio) * 100.0, 1)
             )
 
-    should_cancel = False
+    base_should_cancel = False
     reasons: List[str] = []
     metric_label = "Seeding time" if rule.time_metric == "seeding_time" else "Transfer age"
 
     if eligible_status:
-        if rule.use_time_rule and rule.use_ratio_rule:
+        if rule.cancel_on_completed and seeding_or_done:
+            base_should_cancel = True
+            reasons.append("Files downloaded to Put.io (Immediate Cancel Rule)")
+        elif rule.use_time_rule and rule.use_ratio_rule:
             if rule.condition_operator == "AND":
-                should_cancel = time_reached and ratio_reached
-                if should_cancel:
+                base_should_cancel = time_reached and ratio_reached
+                if base_should_cancel:
                     reasons.append(
                         f"{metric_label} {format_duration(evaluated_seconds)} >= {format_duration(target_seconds)} "
                         f"AND Ratio {current_ratio:.2f} >= {target_ratio:.2f}"
                     )
             else:  # OR
-                should_cancel = time_reached or ratio_reached
+                base_should_cancel = time_reached or ratio_reached
                 if time_reached:
                     reasons.append(
                         f"{metric_label} {format_duration(evaluated_seconds)} >= {format_duration(target_seconds)}"
@@ -201,31 +298,67 @@ def evaluate_transfer_against_rule(
                         f"Ratio {current_ratio:.2f} >= {target_ratio:.2f}"
                     )
         elif rule.use_time_rule:
-            should_cancel = time_reached
+            base_should_cancel = time_reached
             if time_reached:
                 reasons.append(
                     f"{metric_label} {format_duration(evaluated_seconds)} >= {format_duration(target_seconds)}"
                 )
         elif rule.use_ratio_rule:
-            should_cancel = ratio_reached
+            base_should_cancel = ratio_reached
             if ratio_reached:
                 reasons.append(f"Ratio {current_ratio:.2f} >= {target_ratio:.2f}")
+
+    # Apply Extended Keep-Alive Protection if transfer qualifies as Top Seeded or Largest
+    protection_active = False
+    should_cancel = base_should_cancel
+
+    if protection_label and seeding_or_done:
+        if seeding_seconds < keep_alive_target_seconds:
+            # Protected! Keep transfer alive until keep_alive_target_seconds
+            protection_active = True
+            should_cancel = False
+            reasons = []
+            target_seconds = keep_alive_target_seconds
+            evaluated_seconds = seeding_seconds
+            time_progress_pct = (
+                min(
+                    100.0,
+                    round((seeding_seconds / keep_alive_target_seconds) * 100.0, 1),
+                )
+                if keep_alive_target_seconds > 0
+                else 100.0
+            )
+            remaining_seconds = max(0, int(keep_alive_target_seconds - seeding_seconds))
+        else:
+            # Keep-alive duration has been reached!
+            should_cancel = True
+            reasons.append(
+                f"{protection_label} keep-alive limit reached ({format_duration(seeding_seconds)} >= {format_duration(keep_alive_target_seconds)})"
+            )
+
+    effective_use_time = bool(
+        rule.use_time_rule or rule.cancel_on_completed or protection_active
+    )
 
     return {
         "rule_enabled": True,
         "rule_id": rule.tracker_id,
         "rule_summary": describe_rule(rule),
         "condition_operator": rule.condition_operator,
-        "use_time_rule": rule.use_time_rule,
+        "cancel_on_completed": rule.cancel_on_completed,
+        "use_time_rule": effective_use_time,
         "use_ratio_rule": rule.use_ratio_rule,
         "eligible_status": eligible_status,
         "should_cancel": should_cancel,
         "reason": " | ".join(reasons) if reasons else None,
+        "protection_label": protection_label,
+        "protection_active": protection_active,
+        "keep_alive_target_seconds": int(keep_alive_target_seconds) if protection_label else None,
         "time_progress_pct": time_progress_pct,
         "ratio_progress_pct": ratio_progress_pct,
         "remaining_seconds": remaining_seconds,
         "evaluated_seconds": evaluated_seconds,
-        "target_seconds": int(target_seconds) if rule.use_time_rule else None,
+        "target_seconds": int(target_seconds) if effective_use_time else None,
         "target_ratio": target_ratio if rule.use_ratio_rule else None,
     }
 
@@ -254,7 +387,7 @@ class TransferMonitorService:
         if self._task is None or self._task.done():
             self._stop_event.clear()
             self._task = asyncio.create_task(self._run_loop())
-            logger.info("Started Put.io TransferMonitorService background loop.")
+            logger.info("Started PutWatch TransferMonitorService background loop.")
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -264,7 +397,7 @@ class TransferMonitorService:
                 await asyncio.wait_for(self._task, timeout=5.0)
             except asyncio.TimeoutError:
                 self._task.cancel()
-        logger.info("Stopped Put.io TransferMonitorService background loop.")
+        logger.info("Stopped PutWatch TransferMonitorService background loop.")
 
     def trigger_immediate_poll(self) -> None:
         self._wake_event.set()
@@ -315,7 +448,6 @@ class TransferMonitorService:
                 client = PutioClient(token=cfg.putio_token)
 
                 # If PutWatch OAuth App ID is not registered yet, automatically register "PutWatch"
-                # (referencing https://github.com/ben68165/PutWatch) and remove any leftover swagger-test grant
                 if not cfg.putio_app_id:
                     app_reg = await client.ensure_putwatch_oauth_app()
                     if app_reg and app_reg.get("app_id"):
@@ -327,7 +459,6 @@ class TransferMonitorService:
 
                 raw_transfers = await client.list_transfers()
 
-                # Refresh account info occasionally if missing
                 if self.account_info is None:
                     try:
                         self.account_info = await client.get_account_info()
@@ -340,8 +471,6 @@ class TransferMonitorService:
 
                 newly_discovered: List[str] = []
                 config_modified = False
-
-                # Count active transfers per tracker for this poll
                 active_counts: Dict[str, int] = {}
 
                 # First pass: extract trackers & auto-discover
@@ -383,7 +512,6 @@ class TransferMonitorService:
                             newly_discovered.append(tracker_id)
                             config_modified = True
 
-                # Update current active transfer counts on tracker records
                 for tracker_id, rule_obj in cfg.trackers.items():
                     new_count = active_counts.get(tracker_id, 0)
                     if rule_obj.matched_transfers_count != new_count:
@@ -393,9 +521,36 @@ class TransferMonitorService:
                 if config_modified:
                     cfg = self.store.save(cfg)
 
+                # Group transfers by matched rule to compute Top Seeded & Largest keep-alive rankings per tracker
+                transfers_by_rule_id: Dict[str, List[Dict[str, Any]]] = {}
+                rules_by_id: Dict[str, TrackerRule] = {}
+                matched_for_transfer: Dict[int, Tuple[str, Optional[TrackerRule]]] = {}
+
+                for t in raw_transfers:
+                    tid = int(t.get("id") or 0)
+                    extracted = transfer_tracker_map.get(
+                        tid, [("untracked", "Direct / DHT (No Tracker)")]
+                    )
+                    matched_tracker_id, matched_rule = find_matching_rule(
+                        extracted, cfg
+                    )
+                    matched_for_transfer[tid] = (matched_tracker_id, matched_rule)
+                    if matched_rule and matched_rule.enabled:
+                        rid = matched_rule.tracker_id
+                        rules_by_id[rid] = matched_rule
+                        transfers_by_rule_id.setdefault(rid, []).append(t)
+
+                # Compute protected transfer IDs per rule
+                protections_by_transfer_id: Dict[int, str] = {}
+                for rid, rule_transfers in transfers_by_rule_id.items():
+                    rule_protections = compute_keep_alive_protections(
+                        rule_transfers, rules_by_id[rid]
+                    )
+                    protections_by_transfer_id.update(rule_protections)
+
                 # Second pass: evaluate rules and optionally cancel & remove matching transfers
                 enriched_transfers: List[Dict[str, Any]] = []
-                canceled_Actions: List[ActivityLogEntry] = []
+                canceled_actions: List[ActivityLogEntry] = []
                 is_dry_run = cfg.dry_run if force_dry_run is None else force_dry_run
 
                 for t in raw_transfers:
@@ -405,10 +560,13 @@ class TransferMonitorService:
                     extracted = transfer_tracker_map.get(
                         tid, [("untracked", "Direct / DHT (No Tracker)")]
                     )
-                    matched_tracker_id, matched_rule = find_matching_rule(
-                        extracted, cfg
+                    matched_tracker_id, matched_rule = matched_for_transfer.get(
+                        tid, ("untracked", None)
                     )
-                    evaluation = evaluate_transfer_against_rule(t, matched_rule)
+                    protection_label = protections_by_transfer_id.get(tid)
+                    evaluation = evaluate_transfer_against_rule(
+                        t, matched_rule, protection_label=protection_label
+                    )
 
                     enriched = {
                         **t,
@@ -444,7 +602,6 @@ class TransferMonitorService:
                                     clean_after_cancel=cfg.clean_completed_after_cancel,
                                 )
                                 enriched["canceled_now"] = True
-                                # Increment counter on tracker rule
                                 latest_cfg = self.store.get()
                                 if (
                                     matched_rule
@@ -465,15 +622,14 @@ class TransferMonitorService:
                                 entry.error_message = str(exc)
 
                         self.store.append_log(entry)
-                        canceled_Actions.append(entry)
+                        canceled_actions.append(entry)
 
                     enriched_transfers.append(enriched)
 
-                # If we actually canceled any transfers (non-dry-run), filter them out or re-fetch
-                if any(a.success and not a.dry_run for a in canceled_Actions):
+                if any(a.success and not a.dry_run for a in canceled_actions):
                     canceled_ids = {
                         a.transfer_id
-                        for a in canceled_Actions
+                        for a in canceled_actions
                         if a.success and not a.dry_run
                     }
                     enriched_transfers = [
@@ -488,7 +644,7 @@ class TransferMonitorService:
                     "last_poll_at": self.last_poll_at,
                     "transfers": enriched_transfers,
                     "newly_discovered_trackers": newly_discovered,
-                    "canceled": [a.model_dump(mode="json") for a in canceled_Actions],
+                    "canceled": [a.model_dump(mode="json") for a in canceled_actions],
                 }
             except PutioApiError as exc:
                 self.last_error = f"Put.io API Error: {exc}"

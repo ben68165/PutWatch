@@ -71,6 +71,11 @@ async def serve_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def serve_favicon() -> FileResponse:
+    return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/api/health")
 async def healthcheck() -> Dict[str, Any]:
     cfg = store.get()
@@ -297,10 +302,17 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         normalized_id = norm[0] if norm else raw_id.lower()
         sample_url = norm[1] if norm and "://" in norm[1] else None
 
-    if req.enabled and not req.use_time_rule and not req.use_ratio_rule:
+    if (
+        req.enabled
+        and not req.cancel_on_completed
+        and not req.use_time_rule
+        and not req.use_ratio_rule
+        and not req.keep_top_seeded_enabled
+        and not req.keep_largest_enabled
+    ):
         raise HTTPException(
             status_code=400,
-            detail="An enabled rule must have at least one condition active (Time Rule and/or Ratio Rule).",
+            detail="An enabled rule must have at least one condition active (Cancel on Download, Time Rule, Ratio Rule, or Keep-Alive Rule).",
         )
 
     cfg = store.get()
@@ -319,12 +331,19 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
             else (existing.display_name if existing and existing.display_name else normalized_id)
         ),
         enabled=req.enabled,
+        cancel_on_completed=req.cancel_on_completed,
         use_time_rule=req.use_time_rule,
         max_time_minutes=req.max_time_minutes,
         time_metric=req.time_metric,
         use_ratio_rule=req.use_ratio_rule,
         max_ratio=req.max_ratio,
         condition_operator=req.condition_operator,
+        keep_top_seeded_enabled=req.keep_top_seeded_enabled,
+        keep_top_seeded_count=req.keep_top_seeded_count,
+        top_seeded_metric=req.top_seeded_metric,
+        keep_largest_enabled=req.keep_largest_enabled,
+        keep_largest_count=req.keep_largest_count,
+        keep_alive_hours=req.keep_alive_hours,
         include_downloading=req.include_downloading,
         discovered_from_transfers=(
             existing.discovered_from_transfers if existing else False

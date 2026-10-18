@@ -31,9 +31,11 @@ function formatBytes(bytes) {
 
 function formatDuration(seconds) {
   const secs = Math.max(0, Math.round(Number(seconds) || 0));
-  const h = Math.floor(secs / 3600);
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = secs % 60;
+  if (d > 0) return `${d}d ${String(h).padStart(2, '0')}h`;
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
   return `${s}s`;
@@ -44,7 +46,6 @@ function formatDateTime(isoStr) {
   const dt = new Date(isoStr);
   if (isNaN(dt.getTime())) return String(isoStr);
   const tz = (appState.settings && appState.settings.timezone) || 'Europe/Berlin';
-  // Use German / European formatting (DD.MM.YYYY, HH:mm:ss) for Berlin / European timezones
   const locale = tz.toLowerCase().startsWith('america/') ? 'en-US' : 'de-DE';
   try {
     return new Intl.DateTimeFormat(locale, {
@@ -310,19 +311,36 @@ function renderTransfers() {
         })
         .join('');
 
+      const protectionBadge = ev.protection_active && ev.protection_label
+        ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
+             ★ Protected: ${escapeHtml(ev.protection_label)}
+           </span>`
+        : '';
+
       let ruleProgressHtml = '';
       if (ev.rule_enabled) {
+        const barColor = ev.protection_active ? 'bg-sky-400' : 'bg-amber-500';
+        const timeLabel = ev.protection_active
+          ? `Keep-Alive Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+          : ev.cancel_on_completed
+          ? 'Immediate Cancel on Download Complete'
+          : `Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`;
+
         const timeBar = ev.use_time_rule
           ? `
             <div class="space-y-1">
               <div class="flex justify-between text-[11px]">
-                <span class="text-slate-400">Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})</span>
+                <span class="text-slate-400">${timeLabel}</span>
                 <span class="font-mono text-slate-200">${ev.time_progress_pct}% ${
-                  ev.remaining_seconds > 0 ? `(${formatDuration(ev.remaining_seconds)} left)` : '(Reached!)'
+                  ev.remaining_seconds !== null && ev.remaining_seconds > 0
+                    ? `(${formatDuration(ev.remaining_seconds)} left)`
+                    : ev.remaining_seconds === 0
+                    ? '(Reached!)'
+                    : ''
                 }</span>
               </div>
               <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full bg-amber-500 transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
+                <div class="h-full ${barColor} transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
               </div>
             </div>`
           : '';
@@ -343,8 +361,9 @@ function renderTransfers() {
         ruleProgressHtml = `
           <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[11px]">Active Rule: ${escapeHtml(ev.rule_summary)}</span>
+                ${protectionBadge}
                 ${
                   !ev.eligible_status
                     ? '<span class="text-[11px] text-slate-500">(Waiting for SEEDING state)</span>'
@@ -424,7 +443,18 @@ function renderTrackerCardHtml(r, isDefault = false) {
   const totalMinutes = Number(r.max_time_minutes || 0);
   const hours = Math.floor(totalMinutes / 60);
   const mins = Math.round(totalMinutes % 60);
-  const timeText = `${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Total Age' : 'Seeding Time'})`;
+  const timeText = r.cancel_on_completed
+    ? 'Immediate on Download Complete'
+    : `${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Total Age' : 'Seeding Time'})`;
+
+  const keepParts = [];
+  if (r.keep_top_seeded_enabled) {
+    keepParts.push(`Top ${r.keep_top_seeded_count} Seeded`);
+  }
+  if (r.keep_largest_enabled) {
+    keepParts.push(`Top ${r.keep_largest_count} Largest`);
+  }
+  const keepDurationText = formatDuration(Number(r.keep_alive_hours || 72) * 3600);
 
   return `
     <div class="bg-slate-900 border ${
@@ -445,6 +475,11 @@ function renderTrackerCardHtml(r, isDefault = false) {
               ${
                 isDefault
                   ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Global Fallback</span>'
+                  : ''
+              }
+              ${
+                r.cancel_on_completed
+                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">Cancel on Complete</span>'
                   : ''
               }
             </div>
@@ -475,17 +510,25 @@ function renderTrackerCardHtml(r, isDefault = false) {
         <!-- Rule Conditions Summary Boxes -->
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
           <div class="p-2.5 rounded-lg bg-slate-950 border ${
-            r.use_time_rule ? 'border-amber-500/30 text-slate-200' : 'border-slate-800/80 text-slate-500'
+            r.cancel_on_completed
+              ? 'border-rose-500/40 text-rose-200'
+              : r.use_time_rule
+              ? 'border-amber-500/30 text-slate-200'
+              : 'border-slate-800/80 text-slate-500'
           }">
-            <div class="text-[10px] uppercase tracking-wider text-slate-400">Time Rule</div>
-            <div class="font-semibold mt-0.5">${r.use_time_rule ? escapeHtml(timeText) : 'Off'}</div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">Time / Complete Rule</div>
+            <div class="font-semibold mt-0.5">${
+              r.cancel_on_completed || r.use_time_rule ? escapeHtml(timeText) : 'Off'
+            }</div>
           </div>
 
           <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex flex-col justify-center items-center">
             <div class="text-[10px] uppercase tracking-wider text-slate-400">Condition Logic</div>
             <div class="font-bold text-amber-400 mt-0.5">
               ${
-                r.use_time_rule && r.use_ratio_rule
+                r.cancel_on_completed
+                  ? 'Immediate'
+                  : r.use_time_rule && r.use_ratio_rule
                   ? `${r.condition_operator} (${r.condition_operator === 'AND' ? 'Both Required' : 'Either Triggers'})`
                   : 'Single Rule'
               }
@@ -493,11 +536,29 @@ function renderTrackerCardHtml(r, isDefault = false) {
           </div>
 
           <div class="p-2.5 rounded-lg bg-slate-950 border ${
-            r.use_ratio_rule ? 'border-emerald-500/30 text-slate-200' : 'border-slate-800/80 text-slate-500'
+            r.use_ratio_rule && !r.cancel_on_completed
+              ? 'border-emerald-500/30 text-slate-200'
+              : 'border-slate-800/80 text-slate-500'
           }">
             <div class="text-[10px] uppercase tracking-wider text-slate-400">Ratio Rule</div>
-            <div class="font-semibold mt-0.5">${r.use_ratio_rule ? `Ratio >= ${Number(r.max_ratio).toFixed(2)}` : 'Off'}</div>
+            <div class="font-semibold mt-0.5">${
+              r.use_ratio_rule && !r.cancel_on_completed ? `Ratio >= ${Number(r.max_ratio).toFixed(2)}` : 'Off'
+            }</div>
           </div>
+        </div>
+
+        <!-- Keep-Alive Summary Banner -->
+        <div class="p-2.5 rounded-lg bg-slate-950 border ${
+          keepParts.length > 0 ? 'border-sky-500/40 text-sky-200' : 'border-slate-800/80 text-slate-500'
+        } text-xs flex items-center justify-between">
+          <span class="text-[10px] uppercase tracking-wider text-slate-400">Keep-Alive Exceptions</span>
+          <span class="font-semibold">
+            ${
+              keepParts.length > 0
+                ? `★ Keep ${escapeHtml(keepParts.join(' + '))} for ${escapeHtml(keepDurationText)}`
+                : 'None configured'
+            }
+          </span>
         </div>
       </div>
 
@@ -667,12 +728,20 @@ function openRuleModal(trackerId) {
   const nameInput = document.getElementById('modal-display-name');
   const sampleUrlEl = document.getElementById('modal-sample-url');
   const enabledChk = document.getElementById('modal-enabled');
+  const cancelOnCompletedChk = document.getElementById('modal-cancel-on-completed');
   const useTimeChk = document.getElementById('modal-use-time');
   const hoursInput = document.getElementById('modal-time-hours');
   const minsInput = document.getElementById('modal-time-minutes');
   const metricSelect = document.getElementById('modal-time-metric');
   const useRatioChk = document.getElementById('modal-use-ratio');
   const ratioInput = document.getElementById('modal-max-ratio');
+  const keepTopSeededChk = document.getElementById('modal-keep-top-seeded');
+  const keepTopSeededCountInput = document.getElementById('modal-keep-top-seeded-count');
+  const topSeededMetricSelect = document.getElementById('modal-top-seeded-metric');
+  const keepLargestChk = document.getElementById('modal-keep-largest');
+  const keepLargestCountInput = document.getElementById('modal-keep-largest-count');
+  const keepAliveDaysInput = document.getElementById('modal-keep-alive-days');
+  const keepAliveHoursInput = document.getElementById('modal-keep-alive-hours');
   const inclDownChk = document.getElementById('modal-include-downloading');
 
   let existing = null;
@@ -690,6 +759,7 @@ function openRuleModal(trackerId) {
     nameInput.value = existing.display_name || '';
     sampleUrlEl.textContent = existing.sample_announce_url ? `Sample Announce URL: ${existing.sample_announce_url}` : '';
     enabledChk.checked = Boolean(existing.enabled);
+    cancelOnCompletedChk.checked = Boolean(existing.cancel_on_completed);
     useTimeChk.checked = Boolean(existing.use_time_rule);
     const totalMins = Number(existing.max_time_minutes || 0);
     hoursInput.value = Math.floor(totalMins / 60);
@@ -697,6 +767,17 @@ function openRuleModal(trackerId) {
     metricSelect.value = existing.time_metric || 'seeding_time';
     useRatioChk.checked = Boolean(existing.use_ratio_rule);
     ratioInput.value = Number(existing.max_ratio || 1.0).toFixed(2);
+
+    keepTopSeededChk.checked = Boolean(existing.keep_top_seeded_enabled);
+    keepTopSeededCountInput.value = Number(existing.keep_top_seeded_count || 3);
+    topSeededMetricSelect.value = existing.top_seeded_metric || 'up_speed';
+    keepLargestChk.checked = Boolean(existing.keep_largest_enabled);
+    keepLargestCountInput.value = Number(existing.keep_largest_count || 3);
+
+    const totalKeepHours = Number(existing.keep_alive_hours || 72);
+    keepAliveDaysInput.value = Math.floor(totalKeepHours / 24);
+    keepAliveHoursInput.value = Math.round(totalKeepHours % 24);
+
     inclDownChk.checked = Boolean(existing.include_downloading);
 
     const opRadios = document.getElementsByName('modal-operator');
@@ -712,12 +793,20 @@ function openRuleModal(trackerId) {
     nameInput.value = '';
     sampleUrlEl.textContent = '';
     enabledChk.checked = true;
+    cancelOnCompletedChk.checked = false;
     useTimeChk.checked = true;
     hoursInput.value = 2;
     minsInput.value = 0;
     metricSelect.value = 'seeding_time';
     useRatioChk.checked = false;
     ratioInput.value = '1.00';
+    keepTopSeededChk.checked = false;
+    keepTopSeededCountInput.value = 3;
+    topSeededMetricSelect.value = 'up_speed';
+    keepLargestChk.checked = false;
+    keepLargestCountInput.value = 3;
+    keepAliveDaysInput.value = 3;
+    keepAliveHoursInput.value = 0;
     inclDownChk.checked = false;
     const opRadios = document.getElementsByName('modal-operator');
     opRadios.forEach((r) => {
@@ -734,12 +823,23 @@ function closeRuleModal() {
 }
 
 function updateModalConditionUI() {
+  const cancelOnComplete = document.getElementById('modal-cancel-on-completed').checked;
   const useTime = document.getElementById('modal-use-time').checked;
   const useRatio = document.getElementById('modal-use-ratio').checked;
+  const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
+  const keepLargest = document.getElementById('modal-keep-largest').checked;
 
-  document.getElementById('modal-time-fields').style.opacity = useTime ? '1' : '0.4';
-  document.getElementById('modal-ratio-fields').style.opacity = useRatio ? '1' : '0.4';
-  document.getElementById('modal-operator-box').style.opacity = useTime && useRatio ? '1' : '0.45';
+  document.getElementById('modal-time-box').style.opacity = cancelOnComplete ? '0.4' : '1';
+  document.getElementById('modal-ratio-box').style.opacity = cancelOnComplete ? '0.4' : '1';
+  document.getElementById('modal-time-fields').style.opacity = useTime && !cancelOnComplete ? '1' : '0.4';
+  document.getElementById('modal-ratio-fields').style.opacity = useRatio && !cancelOnComplete ? '1' : '0.4';
+  document.getElementById('modal-operator-box').style.opacity =
+    useTime && useRatio && !cancelOnComplete ? '1' : '0.45';
+
+  document.getElementById('modal-top-seeded-fields').style.opacity = keepTopSeeded ? '1' : '0.4';
+  document.getElementById('modal-largest-fields').style.opacity = keepLargest ? '1' : '0.4';
+  document.getElementById('modal-keep-alive-duration-box').style.opacity =
+    keepTopSeeded || keepLargest ? '1' : '0.45';
 }
 
 async function saveModalRule() {
@@ -750,17 +850,24 @@ async function saveModalRule() {
   }
 
   const enabled = document.getElementById('modal-enabled').checked;
+  const cancelOnCompleted = document.getElementById('modal-cancel-on-completed').checked;
   const useTime = document.getElementById('modal-use-time').checked;
   const useRatio = document.getElementById('modal-use-ratio').checked;
+  const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
+  const keepLargest = document.getElementById('modal-keep-largest').checked;
 
-  if (enabled && !useTime && !useRatio) {
-    showToast('Please enable at least one condition (Time Limit and/or Ratio Limit).', 'error');
+  if (enabled && !cancelOnCompleted && !useTime && !useRatio && !keepTopSeeded && !keepLargest) {
+    showToast('Please enable at least one rule condition.', 'error');
     return;
   }
 
   const hours = Math.max(0, Number(document.getElementById('modal-time-hours').value) || 0);
   const mins = Math.max(0, Number(document.getElementById('modal-time-minutes').value) || 0);
   const maxTimeMinutes = hours * 60 + mins;
+
+  const keepDays = Math.max(0, Number(document.getElementById('modal-keep-alive-days').value) || 0);
+  const keepHoursPart = Math.max(0, Number(document.getElementById('modal-keep-alive-hours').value) || 0);
+  const keepAliveHours = Math.max(0.5, keepDays * 24 + keepHoursPart);
 
   let operator = 'OR';
   document.getElementsByName('modal-operator').forEach((r) => {
@@ -771,12 +878,19 @@ async function saveModalRule() {
     tracker_id: trackerId,
     display_name: document.getElementById('modal-display-name').value.trim(),
     enabled,
+    cancel_on_completed: cancelOnCompleted,
     use_time_rule: useTime,
     max_time_minutes: maxTimeMinutes,
     time_metric: document.getElementById('modal-time-metric').value,
     use_ratio_rule: useRatio,
     max_ratio: Math.max(0, Number(document.getElementById('modal-max-ratio').value) || 0),
     condition_operator: operator,
+    keep_top_seeded_enabled: keepTopSeeded,
+    keep_top_seeded_count: Math.max(1, Number(document.getElementById('modal-keep-top-seeded-count').value) || 3),
+    top_seeded_metric: document.getElementById('modal-top-seeded-metric').value || 'up_speed',
+    keep_largest_enabled: keepLargest,
+    keep_largest_count: Math.max(1, Number(document.getElementById('modal-keep-largest-count').value) || 3),
+    keep_alive_hours: keepAliveHours,
     include_downloading: document.getElementById('modal-include-downloading').checked,
   };
 
@@ -808,12 +922,19 @@ async function quickToggleRule(trackerId) {
     tracker_id: existing.tracker_id,
     display_name: existing.display_name,
     enabled: newEnabled,
-    use_time_rule: existing.use_time_rule || (!existing.use_ratio_rule && newEnabled),
+    cancel_on_completed: Boolean(existing.cancel_on_completed),
+    use_time_rule: existing.use_time_rule || (!existing.use_ratio_rule && !existing.cancel_on_completed && newEnabled),
     max_time_minutes: existing.max_time_minutes,
     time_metric: existing.time_metric || 'seeding_time',
     use_ratio_rule: existing.use_ratio_rule,
     max_ratio: existing.max_ratio,
     condition_operator: existing.condition_operator || 'OR',
+    keep_top_seeded_enabled: Boolean(existing.keep_top_seeded_enabled),
+    keep_top_seeded_count: existing.keep_top_seeded_count || 3,
+    top_seeded_metric: existing.top_seeded_metric || 'up_speed',
+    keep_largest_enabled: Boolean(existing.keep_largest_enabled),
+    keep_largest_count: existing.keep_largest_count || 3,
+    keep_alive_hours: existing.keep_alive_hours || 72.0,
     include_downloading: Boolean(existing.include_downloading),
   };
 

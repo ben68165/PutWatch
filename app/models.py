@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 ConditionOperator = Literal["OR", "AND"]
+TopSeededMetric = Literal["up_speed", "uploaded", "ratio"]
 
 PUTWATCH_APP_NAME = "PutWatch"
 PUTWATCH_REPO_URL = "https://github.com/ben68165/PutWatch"
@@ -28,6 +29,11 @@ class TrackerRule(BaseModel):
     enabled: bool = Field(
         default=False,
         description="Whether automatic cancellation is active for this tracker.",
+    )
+    # Option to cancel immediately once download to Put.io is finished
+    cancel_on_completed: bool = Field(
+        default=False,
+        description="If True, cancel and remove the transfer as soon as its files finish downloading to Put.io (unless protected by a keep-alive rule).",
     )
     # Time threshold (in minutes, converted to seconds during evaluation)
     use_time_rule: bool = Field(
@@ -57,6 +63,36 @@ class TrackerRule(BaseModel):
     condition_operator: ConditionOperator = Field(
         default="OR",
         description="How to combine time and ratio rules when both are enabled: 'OR' (either reached) or 'AND' (both reached).",
+    )
+    # Extended Keep-Alive protection for Top Seeded & Largest transfers per tracker
+    keep_top_seeded_enabled: bool = Field(
+        default=False,
+        description="Keep the top N seeding transfers on this tracker alive for keep_alive_hours.",
+    )
+    keep_top_seeded_count: int = Field(
+        default=3,
+        ge=1,
+        le=500,
+        description="Number of top seeding transfers to keep alive longer.",
+    )
+    top_seeded_metric: TopSeededMetric = Field(
+        default="up_speed",
+        description="How to rank top seeded transfers: 'up_speed' (upload speed + total uploaded), 'uploaded' (total uploaded bytes), or 'ratio' (share ratio).",
+    )
+    keep_largest_enabled: bool = Field(
+        default=False,
+        description="Additionally keep the M largest transfers on this tracker alive for keep_alive_hours.",
+    )
+    keep_largest_count: int = Field(
+        default=3,
+        ge=1,
+        le=500,
+        description="Number of largest transfers (by file size) per tracker to additionally keep alive longer.",
+    )
+    keep_alive_hours: float = Field(
+        default=72.0,
+        ge=0.5,
+        description="How many hours (or days * 24) to keep top seeded and/or largest transfers alive before canceling.",
     )
     include_downloading: bool = Field(
         default=False,
@@ -133,6 +169,7 @@ class AppConfig(BaseModel):
             tracker_id="__default__",
             display_name="Default / Fallback Rule (Unconfigured Trackers)",
             enabled=False,
+            cancel_on_completed=False,
             use_time_rule=True,
             max_time_minutes=240.0,
             time_metric="seeding_time",
@@ -166,10 +203,17 @@ class TrackerRuleUpdateRequest(BaseModel):
     tracker_id: str
     display_name: Optional[str] = None
     enabled: bool = False
+    cancel_on_completed: bool = False
     use_time_rule: bool = True
     max_time_minutes: float = Field(default=120.0, ge=0.0)
     time_metric: Literal["seeding_time", "total_age"] = "seeding_time"
     use_ratio_rule: bool = False
     max_ratio: float = Field(default=1.0, ge=0.0)
     condition_operator: ConditionOperator = "OR"
+    keep_top_seeded_enabled: bool = False
+    keep_top_seeded_count: int = Field(default=3, ge=1, le=500)
+    top_seeded_metric: TopSeededMetric = "up_speed"
+    keep_largest_enabled: bool = False
+    keep_largest_count: int = Field(default=3, ge=1, le=500)
+    keep_alive_hours: float = Field(default=72.0, ge=0.1)
     include_downloading: bool = False
