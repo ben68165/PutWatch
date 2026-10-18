@@ -1,0 +1,929 @@
+let appState = {
+  settings: {},
+  monitor: {},
+  transfers: [],
+  trackers: [],
+  default_rule: null,
+  activity_log: [],
+};
+
+let currentTab = 'transfers';
+let oobPollTimer = null;
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatBytes(bytes) {
+  const num = Number(bytes) || 0;
+  if (num <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(num) / Math.log(1024)), units.length - 1);
+  return `${(num / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
+function formatDuration(seconds) {
+  const secs = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  const colors = {
+    success: 'bg-emerald-950/95 border-emerald-500/50 text-emerald-200',
+    error: 'bg-red-950/95 border-red-500/50 text-red-200',
+    info: 'bg-slate-900/95 border-amber-500/50 text-amber-200',
+  };
+  el.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-xl text-xs sm:text-sm font-medium transition-all ${colors[type] || colors.info}`;
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 4200);
+}
+
+function switchTab(tabName) {
+  currentTab = tabName;
+  ['transfers', 'trackers', 'logs', 'settings'].forEach((t) => {
+    const sec = document.getElementById(`tab-${t}`);
+    const btn = document.getElementById(`tab-btn-${t}`);
+    if (t === tabName) {
+      sec.classList.remove('hidden');
+      btn.classList.add('border-amber-500', 'text-amber-400');
+      btn.classList.remove('border-transparent', 'text-slate-400');
+    } else {
+      sec.classList.add('hidden');
+      btn.classList.remove('border-amber-500', 'text-amber-400');
+      btn.classList.add('border-transparent', 'text-slate-400');
+    }
+  });
+}
+
+async function fetchState() {
+  try {
+    const resp = await fetch('/api/state');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    updateUI(data);
+  } catch (err) {
+    console.error('Failed to fetch state:', err);
+  }
+}
+
+async function scanNow() {
+  const btn = document.getElementById('btn-scan-now');
+  const spinner = document.getElementById('scan-spinner');
+  btn.disabled = true;
+  spinner.classList.add('animate-spin');
+  try {
+    const resp = await fetch('/api/poll?execute_rules=true', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.detail || 'Poll failed');
+    }
+    if (data.state) {
+      updateUI(data.state);
+    }
+    const pollRes = data.poll_result || {};
+    if (!pollRes.ok && pollRes.error) {
+      showToast(pollRes.error, 'error');
+    } else {
+      const newCount = (pollRes.newly_discovered_trackers || []).length;
+      const canceledCount = (pollRes.canceled || []).length;
+      let msg = `Scanned ${(pollRes.transfers || []).length} active transfer(s).`;
+      if (newCount > 0) msg += ` Discovered ${newCount} new tracker(s)!`;
+      if (canceledCount > 0) msg += ` Triggered ${canceledCount} rule cancellation(s)!`;
+      showToast(msg, 'success');
+    }
+  } catch (err) {
+    showToast(`Scan error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    spinner.classList.remove('animate-spin');
+  }
+}
+
+function updateUI(state) {
+  appState = state;
+  const s = state.settings || {};
+  const m = state.monitor || {};
+  const transfers = state.transfers || [];
+  const trackers = state.trackers || [];
+  const logs = state.activity_log || [];
+
+  // Badges
+  document.getElementById('badge-transfers-count').textContent = transfers.length;
+  document.getElementById('badge-trackers-count').textContent = trackers.length;
+  document.getElementById('badge-logs-count').textContent = logs.length;
+
+  // Service status badge
+  const statusBadge = document.getElementById('service-status-badge');
+  const quickToggle = document.getElementById('btn-quick-toggle');
+  if (s.monitoring_enabled) {
+    statusBadge.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
+    statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 24/7 Active';
+    quickToggle.textContent = 'Pause Monitor';
+  } else {
+    statusBadge.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700';
+    statusBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> Monitor Paused';
+    quickToggle.textContent = 'Resume Monitor';
+  }
+
+  const dryRunBadge = document.getElementById('dry-run-badge');
+  if (s.dry_run) {
+    dryRunBadge.classList.remove('hidden');
+  } else {
+    dryRunBadge.classList.add('hidden');
+  }
+
+  // Header labels
+  document.getElementById('last-poll-label').textContent = m.last_poll_at
+    ? `Last scan: ${m.last_poll_at.replace('T', ' ').replace('Z', ' UTC')}`
+    : 'Last scan: Pending';
+
+  if (m.account_info && m.account_info.username) {
+    document.getElementById('account-label').textContent = `Put.io: @${m.account_info.username}`;
+  } else if (s.has_token) {
+    document.getElementById('account-label').textContent = `Token: ${s.masked_token}`;
+  } else {
+    document.getElementById('account-label').textContent = 'No token configured';
+  }
+
+  // Alert Banner
+  const alertBanner = document.getElementById('alert-banner');
+  const alertText = document.getElementById('alert-banner-text');
+  if (!s.has_token) {
+    alertBanner.classList.remove('hidden');
+    alertText.textContent = 'Put.io OAuth token is not configured yet. Connect your Put.io account to start monitoring transfers.';
+  } else if (m.last_error) {
+    alertBanner.classList.remove('hidden');
+    alertText.textContent = m.last_error;
+  } else {
+    alertBanner.classList.add('hidden');
+  }
+
+  // KPIs
+  const seedingCount = transfers.filter((t) => String(t.status || '').toUpperCase() === 'SEEDING').length;
+  const enabledRulesCount = trackers.filter((t) => t.enabled).length + (state.default_rule && state.default_rule.enabled ? 1 : 0);
+  document.getElementById('kpi-transfers').textContent = transfers.length;
+  document.getElementById('kpi-seeding').textContent = `${seedingCount} seeding`;
+  document.getElementById('kpi-trackers').textContent = trackers.length;
+  document.getElementById('kpi-active-rules').textContent = `${enabledRulesCount} active rule${enabledRulesCount === 1 ? '' : 's'}`;
+  document.getElementById('kpi-canceled').textContent = logs.length;
+  document.getElementById('kpi-interval').textContent = `${s.poll_interval_seconds || 30}s`;
+
+  renderTransfers();
+  renderTrackers();
+  renderLogs();
+  renderSettingsForm();
+}
+
+function getStatusBadgeHtml(status) {
+  const st = String(status || 'UNKNOWN').toUpperCase();
+  const styles = {
+    SEEDING: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    DOWNLOADING: 'bg-sky-500/15 text-sky-400 border-sky-500/30',
+    COMPLETED: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+    COMPLETING: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+    IN_QUEUE: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    WAITING: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    ERROR: 'bg-red-500/15 text-red-400 border-red-500/30',
+  };
+  const cls = styles[st] || 'bg-slate-800 text-slate-300 border-slate-700';
+  return `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${cls}">${escapeHtml(st)}</span>`;
+}
+
+function renderTransfers() {
+  const container = document.getElementById('transfers-list');
+  const filter = (document.getElementById('transfer-search')?.value || '').trim().toLowerCase();
+  const transfers = (appState.transfers || []).filter((t) => {
+    if (!filter) return true;
+    const nameMatch = String(t.name || '').toLowerCase().includes(filter);
+    const trackerMatch = String(t.primary_tracker || '').toLowerCase().includes(filter);
+    return nameMatch || trackerMatch;
+  });
+
+  if (!appState.settings?.has_token) {
+    container.innerHTML = `
+      <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-8 text-center space-y-3">
+        <div class="text-slate-300 font-semibold">Put.io Account Not Connected</div>
+        <p class="text-xs text-slate-400 max-w-md mx-auto">
+          Configure your Put.io OAuth token or link your device in the Settings tab to automatically detect trackers and monitor active transfers.
+        </p>
+        <button onclick="switchTab('settings')" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs cursor-pointer">
+          Connect Put.io Account
+        </button>
+      </div>`;
+    return;
+  }
+
+  if (transfers.length === 0) {
+    container.innerHTML = `
+      <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-8 text-center space-y-2">
+        <div class="text-slate-300 font-semibold">No Matching Active Transfers on Put.io</div>
+        <p class="text-xs text-slate-500">
+          When transfers are active or seeding in your Put.io account, they will appear here along with their identified trackers.
+        </p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = transfers
+    .map((t) => {
+      const ev = t.evaluation || {};
+      const ratio = Number(t.current_ratio || 0).toFixed(2);
+      const seedingSecs = Number(t.seconds_seeding || 0);
+      const upSpeed = Number(t.up_speed || 0);
+      const downSpeed = Number(t.down_speed || 0);
+      const trackersList = t.trackers_list || [{ tracker_id: t.primary_tracker || 'untracked' }];
+
+      const trackerBadges = trackersList
+        .map((tr) => {
+          const trId = tr.tracker_id;
+          const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
+          const isEnabled = configuredRule && configuredRule.enabled;
+          return `
+            <button
+              onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
+              title="Click to configure rule for ${escapeHtml(trId)}"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono border transition cursor-pointer ${
+                isEnabled
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+                  : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
+              }"
+            >
+              <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
+              <span>${escapeHtml(trId)}</span>
+              <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
+            </button>`;
+        })
+        .join('');
+
+      let ruleProgressHtml = '';
+      if (ev.rule_enabled) {
+        const timeBar = ev.use_time_rule
+          ? `
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px]">
+                <span class="text-slate-400">Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})</span>
+                <span class="font-mono text-slate-200">${ev.time_progress_pct}% ${
+                  ev.remaining_seconds > 0 ? `(${formatDuration(ev.remaining_seconds)} left)` : '(Reached!)'
+                }</span>
+              </div>
+              <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-amber-500 transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
+              </div>
+            </div>`
+          : '';
+
+        const ratioBar = ev.use_ratio_rule
+          ? `
+            <div class="space-y-1">
+              <div class="flex justify-between text-[11px]">
+                <span class="text-slate-400">Ratio Progress (${ratio} / ${Number(ev.target_ratio).toFixed(2)})</span>
+                <span class="font-mono text-slate-200">${ev.ratio_progress_pct}%</span>
+              </div>
+              <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-emerald-500 transition-all" style="width: ${Math.min(100, ev.ratio_progress_pct)}%"></div>
+              </div>
+            </div>`
+          : '';
+
+        ruleProgressHtml = `
+          <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[11px]">Active Rule: ${escapeHtml(ev.rule_summary)}</span>
+                ${
+                  !ev.eligible_status
+                    ? '<span class="text-[11px] text-slate-500">(Waiting for SEEDING state)</span>'
+                    : ''
+                }
+              </div>
+              ${
+                ev.should_cancel
+                  ? '<span class="text-xs font-bold text-red-400">Threshold Reached</span>'
+                  : ''
+              }
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              ${timeBar}
+              ${ratioBar}
+            </div>
+          </div>`;
+      } else {
+        ruleProgressHtml = `
+          <div class="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
+            <span>No active auto-cancel rule for <code class="text-slate-300">${escapeHtml(t.primary_tracker)}</code></span>
+            <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer">
+              + Set Rule for ${escapeHtml(t.primary_tracker)}
+            </button>
+          </div>`;
+      }
+
+      return `
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700/80 transition">
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div class="space-y-1.5 min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                ${getStatusBadgeHtml(t.status)}
+                <h3 class="font-semibold text-sm sm:text-base text-white truncate" title="${escapeHtml(t.name)}">
+                  ${escapeHtml(t.name)}
+                </h3>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 pt-0.5">
+                <span class="text-xs text-slate-400">Identified Tracker(s):</span>
+                ${trackerBadges}
+              </div>
+            </div>
+
+            <!-- Metrics & Manual Cancel -->
+            <div class="flex flex-wrap items-center gap-4 text-xs sm:text-sm shrink-0">
+              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                <span class="text-slate-400 text-xs block">Seeding Time</span>
+                <span class="font-mono font-semibold text-white">${formatDuration(seedingSecs)}</span>
+              </div>
+              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                <span class="text-slate-400 text-xs block">Share Ratio</span>
+                <span class="font-mono font-semibold text-emerald-400">${ratio}</span>
+              </div>
+              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                <span class="text-slate-400 text-xs block">Size / Speed</span>
+                <span class="font-mono text-slate-200 text-xs">
+                  ${formatBytes(t.size)}
+                  ${upSpeed > 0 ? ` &bull; &uarr;${formatBytes(upSpeed)}/s` : ''}
+                  ${downSpeed > 0 ? ` &bull; &darr;${formatBytes(downSpeed)}/s` : ''}
+                </span>
+              </div>
+              <button
+                onclick="manualCancelTransfer(${Number(t.id)}, ${JSON.stringify(String(t.name || '')).replace(/"/g, '&quot;')})"
+                class="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold transition cursor-pointer"
+              >
+                Cancel &amp; Remove
+              </button>
+            </div>
+          </div>
+          ${ruleProgressHtml}
+        </div>`;
+    })
+    .join('');
+}
+
+function renderTrackerCardHtml(r, isDefault = false) {
+  const totalMinutes = Number(r.max_time_minutes || 0);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = Math.round(totalMinutes % 60);
+  const timeText = `${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Total Age' : 'Seeding Time'})`;
+
+  return `
+    <div class="bg-slate-900 border ${
+      r.enabled ? 'border-amber-500/50 shadow-lg shadow-amber-500/5' : 'border-slate-800'
+    } rounded-xl p-5 flex flex-col justify-between gap-4">
+      <div class="space-y-3">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-mono font-bold text-sm sm:text-base text-white truncate">
+                ${escapeHtml(isDefault ? 'Default Fallback Rule (Unmatched Trackers)' : r.tracker_id)}
+              </span>
+              ${
+                !isDefault && r.discovered_from_transfers
+                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">Auto-Discovered</span>'
+                  : ''
+              }
+              ${
+                isDefault
+                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Global Fallback</span>'
+                  : ''
+              }
+            </div>
+            ${
+              r.sample_announce_url
+                ? `<p class="text-[11px] text-slate-500 font-mono truncate mt-0.5" title="${escapeHtml(r.sample_announce_url)}">${escapeHtml(r.sample_announce_url)}</p>`
+                : `<p class="text-xs text-slate-400 mt-0.5">${
+                    isDefault
+                      ? 'Applies to any transfer whose tracker does not have its own specific rule enabled.'
+                      : escapeHtml(r.display_name || '')
+                  }</p>`
+            }
+          </div>
+
+          <!-- Quick Enable Toggle -->
+          <button
+            onclick="quickToggleRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-3 py-1 rounded-full text-xs font-bold border transition cursor-pointer shrink-0 ${
+              r.enabled
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+            }"
+          >
+            ${r.enabled ? '● Rule Enabled' : '○ Disabled'}
+          </button>
+        </div>
+
+        <!-- Rule Conditions Summary Boxes -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+          <div class="p-2.5 rounded-lg bg-slate-950 border ${
+            r.use_time_rule ? 'border-amber-500/30 text-slate-200' : 'border-slate-800/80 text-slate-500'
+          }">
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">Time Rule</div>
+            <div class="font-semibold mt-0.5">${r.use_time_rule ? escapeHtml(timeText) : 'Off'}</div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex flex-col justify-center items-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">Condition Logic</div>
+            <div class="font-bold text-amber-400 mt-0.5">
+              ${
+                r.use_time_rule && r.use_ratio_rule
+                  ? `${r.condition_operator} (${r.condition_operator === 'AND' ? 'Both Required' : 'Either Triggers'})`
+                  : 'Single Rule'
+              }
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-slate-950 border ${
+            r.use_ratio_rule ? 'border-emerald-500/30 text-slate-200' : 'border-slate-800/80 text-slate-500'
+          }">
+            <div class="text-[10px] uppercase tracking-wider text-slate-400">Ratio Rule</div>
+            <div class="font-semibold mt-0.5">${r.use_ratio_rule ? `Ratio >= ${Number(r.max_ratio).toFixed(2)}` : 'Off'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-3 border-t border-slate-800/80 text-xs">
+        <div class="text-slate-400 flex items-center gap-3">
+          ${
+            !isDefault
+              ? `<span>Active transfers: <strong class="text-white">${r.matched_transfers_count || 0}</strong></span>
+                 <span>Canceled: <strong class="text-amber-300">${r.canceled_transfers_count || 0}</strong></span>`
+              : `<span>Summary: <strong class="text-amber-300">${escapeHtml(r.rule_summary)}</strong></span>`
+          }
+        </div>
+        <div class="flex items-center gap-2">
+          ${
+            !isDefault
+              ? `<button
+                   onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+                   class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 transition cursor-pointer"
+                   title="Remove tracker from list"
+                 >
+                   Delete
+                 </button>`
+              : ''
+          }
+          <button
+            onclick="openRuleModal(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold transition cursor-pointer"
+          >
+            Edit Rule
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderTrackers() {
+  const defaultContainer = document.getElementById('default-rule-container');
+  if (appState.default_rule) {
+    defaultContainer.innerHTML = renderTrackerCardHtml(appState.default_rule, true);
+  }
+
+  const listEl = document.getElementById('trackers-list');
+  const query = (document.getElementById('tracker-search')?.value || '').trim().toLowerCase();
+  const trackers = (appState.trackers || []).filter((r) => {
+    if (!query) return true;
+    return (
+      String(r.tracker_id || '').toLowerCase().includes(query) ||
+      String(r.display_name || '').toLowerCase().includes(query) ||
+      String(r.sample_announce_url || '').toLowerCase().includes(query)
+    );
+  });
+
+  if (trackers.length === 0) {
+    listEl.innerHTML = `
+      <div class="col-span-full bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
+        <div class="text-slate-300 font-semibold">No Trackers Discovered Yet</div>
+        <p class="text-xs text-slate-400 max-w-lg mx-auto">
+          Click <strong>"Discover from Active Transfers"</strong> while you have active transfers on Put.io to automatically populate your trackers, or add a tracker hostname manually.
+        </p>
+        <div class="flex justify-center gap-2">
+          <button onclick="scanNow()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white cursor-pointer">
+            Scan Active Transfers
+          </button>
+          <button onclick="openRuleModal(null)" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-xs font-semibold text-slate-950 cursor-pointer">
+            + Add Tracker Manually
+          </button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = trackers.map((r) => renderTrackerCardHtml(r, false)).join('');
+}
+
+function renderLogs() {
+  const tbody = document.getElementById('logs-table-body');
+  const logs = appState.activity_log || [];
+  if (logs.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="py-8 text-center text-slate-500 text-xs">
+          No transfers have been canceled yet.
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = logs
+    .map((entry) => {
+      const timeFormatted = String(entry.timestamp || '').replace('T', ' ').replace('Z', '');
+      return `
+        <tr class="hover:bg-slate-800/40">
+          <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
+          <td class="py-3 px-4 font-medium text-white max-w-xs truncate" title="${escapeHtml(entry.transfer_name)}">
+            ${escapeHtml(entry.transfer_name)}
+            <div class="text-[11px] text-slate-500 font-mono">ID: ${entry.transfer_id} &bull; ${escapeHtml(entry.status_at_cancel)}</div>
+          </td>
+          <td class="py-3 px-4 font-mono text-xs text-amber-300">${escapeHtml(entry.tracker_id)}</td>
+          <td class="py-3 px-4 text-xs text-slate-300 whitespace-nowrap">
+            <div>Seeded: <span class="font-mono text-white">${formatDuration(entry.seeding_seconds)}</span></div>
+            <div>Ratio: <span class="font-mono text-emerald-400">${Number(entry.ratio_at_cancel || 0).toFixed(2)}</span></div>
+          </td>
+          <td class="py-3 px-4 text-xs">
+            <div class="font-semibold text-slate-200">${escapeHtml(entry.reason)}</div>
+            <div class="text-[11px] text-slate-500">Rule: ${escapeHtml(entry.rule_summary)}</div>
+          </td>
+          <td class="py-3 px-4 text-xs whitespace-nowrap">
+            ${
+              entry.dry_run
+                ? '<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Dry-Run Simulated</span>'
+                : entry.success
+                ? '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Canceled &amp; Removed</span>'
+                : `<span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30" title="${escapeHtml(entry.error_message)}">Failed</span>`
+            }
+          </td>
+        </tr>`;
+    })
+    .join('');
+}
+
+function renderSettingsForm() {
+  const s = appState.settings || {};
+  const m = appState.monitor || {};
+
+  document.getElementById('chk-monitoring-enabled').checked = Boolean(s.monitoring_enabled);
+  document.getElementById('chk-auto-discover').checked = Boolean(s.auto_discover_trackers);
+  document.getElementById('chk-clean-after-cancel').checked = Boolean(s.clean_completed_after_cancel);
+  document.getElementById('chk-dry-run').checked = Boolean(s.dry_run);
+  document.getElementById('input-poll-interval').value = s.poll_interval_seconds || 30;
+
+  const statusEl = document.getElementById('settings-conn-status');
+  const detailEl = document.getElementById('settings-conn-detail');
+  if (m.account_info && m.account_info.username) {
+    statusEl.className = 'font-semibold text-emerald-400';
+    statusEl.textContent = `Connected as @${m.account_info.username}`;
+    detailEl.textContent = `Account Email: ${m.account_info.mail || 'N/A'} | Token: ${s.masked_token}`;
+  } else if (s.has_token) {
+    statusEl.className = 'font-semibold text-amber-300';
+    statusEl.textContent = `Token Saved (${s.masked_token})`;
+    detailEl.textContent = m.last_error || 'Ready to poll Put.io API.';
+  } else {
+    statusEl.className = 'font-semibold text-red-400';
+    statusEl.textContent = 'Not Configured';
+    detailEl.textContent = 'Please enter a Put.io OAuth token or generate a link code below.';
+  }
+}
+
+// Rule Modal Management
+function openRuleModal(trackerId) {
+  const modal = document.getElementById('rule-modal');
+  const idInput = document.getElementById('modal-tracker-id');
+  const nameInput = document.getElementById('modal-display-name');
+  const sampleUrlEl = document.getElementById('modal-sample-url');
+  const enabledChk = document.getElementById('modal-enabled');
+  const useTimeChk = document.getElementById('modal-use-time');
+  const hoursInput = document.getElementById('modal-time-hours');
+  const minsInput = document.getElementById('modal-time-minutes');
+  const metricSelect = document.getElementById('modal-time-metric');
+  const useRatioChk = document.getElementById('modal-use-ratio');
+  const ratioInput = document.getElementById('modal-max-ratio');
+  const inclDownChk = document.getElementById('modal-include-downloading');
+
+  let existing = null;
+  if (trackerId === '__default__') {
+    existing = appState.default_rule;
+  } else if (trackerId) {
+    existing = (appState.trackers || []).find((t) => t.tracker_id === trackerId);
+  }
+
+  if (existing) {
+    document.getElementById('modal-title').textContent =
+      trackerId === '__default__' ? 'Edit Default Fallback Rule' : `Configure Rule: ${existing.tracker_id}`;
+    idInput.value = existing.tracker_id;
+    idInput.disabled = trackerId === '__default__';
+    nameInput.value = existing.display_name || '';
+    sampleUrlEl.textContent = existing.sample_announce_url ? `Sample Announce URL: ${existing.sample_announce_url}` : '';
+    enabledChk.checked = Boolean(existing.enabled);
+    useTimeChk.checked = Boolean(existing.use_time_rule);
+    const totalMins = Number(existing.max_time_minutes || 0);
+    hoursInput.value = Math.floor(totalMins / 60);
+    minsInput.value = Math.round(totalMins % 60);
+    metricSelect.value = existing.time_metric || 'seeding_time';
+    useRatioChk.checked = Boolean(existing.use_ratio_rule);
+    ratioInput.value = Number(existing.max_ratio || 1.0).toFixed(2);
+    inclDownChk.checked = Boolean(existing.include_downloading);
+
+    const opRadios = document.getElementsByName('modal-operator');
+    opRadios.forEach((r) => {
+      r.checked = r.value === (existing.condition_operator || 'OR');
+    });
+  } else {
+    document.getElementById('modal-title').textContent = trackerId
+      ? `Configure Rule: ${trackerId}`
+      : 'Add Custom Tracker Rule';
+    idInput.value = trackerId || '';
+    idInput.disabled = false;
+    nameInput.value = '';
+    sampleUrlEl.textContent = '';
+    enabledChk.checked = true;
+    useTimeChk.checked = true;
+    hoursInput.value = 2;
+    minsInput.value = 0;
+    metricSelect.value = 'seeding_time';
+    useRatioChk.checked = false;
+    ratioInput.value = '1.00';
+    inclDownChk.checked = false;
+    const opRadios = document.getElementsByName('modal-operator');
+    opRadios.forEach((r) => {
+      r.checked = r.value === 'OR';
+    });
+  }
+
+  updateModalConditionUI();
+  modal.classList.remove('hidden');
+}
+
+function closeRuleModal() {
+  document.getElementById('rule-modal').classList.add('hidden');
+}
+
+function updateModalConditionUI() {
+  const useTime = document.getElementById('modal-use-time').checked;
+  const useRatio = document.getElementById('modal-use-ratio').checked;
+
+  document.getElementById('modal-time-fields').style.opacity = useTime ? '1' : '0.4';
+  document.getElementById('modal-ratio-fields').style.opacity = useRatio ? '1' : '0.4';
+  document.getElementById('modal-operator-box').style.opacity = useTime && useRatio ? '1' : '0.45';
+}
+
+async function saveModalRule() {
+  const trackerId = document.getElementById('modal-tracker-id').value.trim();
+  if (!trackerId) {
+    showToast('Please enter a tracker hostname or identifier.', 'error');
+    return;
+  }
+
+  const enabled = document.getElementById('modal-enabled').checked;
+  const useTime = document.getElementById('modal-use-time').checked;
+  const useRatio = document.getElementById('modal-use-ratio').checked;
+
+  if (enabled && !useTime && !useRatio) {
+    showToast('Please enable at least one condition (Time Limit and/or Ratio Limit).', 'error');
+    return;
+  }
+
+  const hours = Math.max(0, Number(document.getElementById('modal-time-hours').value) || 0);
+  const mins = Math.max(0, Number(document.getElementById('modal-time-minutes').value) || 0);
+  const maxTimeMinutes = hours * 60 + mins;
+
+  let operator = 'OR';
+  document.getElementsByName('modal-operator').forEach((r) => {
+    if (r.checked) operator = r.value;
+  });
+
+  const payload = {
+    tracker_id: trackerId,
+    display_name: document.getElementById('modal-display-name').value.trim(),
+    enabled,
+    use_time_rule: useTime,
+    max_time_minutes: maxTimeMinutes,
+    time_metric: document.getElementById('modal-time-metric').value,
+    use_ratio_rule: useRatio,
+    max_ratio: Math.max(0, Number(document.getElementById('modal-max-ratio').value) || 0),
+    condition_operator: operator,
+    include_downloading: document.getElementById('modal-include-downloading').checked,
+  };
+
+  try {
+    const resp = await fetch('/api/trackers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to save rule');
+    updateUI(data);
+    closeRuleModal();
+    showToast(`Saved rule for ${trackerId}`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function quickToggleRule(trackerId) {
+  let existing =
+    trackerId === '__default__'
+      ? appState.default_rule
+      : (appState.trackers || []).find((t) => t.tracker_id === trackerId);
+  if (!existing) return;
+
+  const newEnabled = !existing.enabled;
+  const payload = {
+    tracker_id: existing.tracker_id,
+    display_name: existing.display_name,
+    enabled: newEnabled,
+    use_time_rule: existing.use_time_rule || (!existing.use_ratio_rule && newEnabled),
+    max_time_minutes: existing.max_time_minutes,
+    time_metric: existing.time_metric || 'seeding_time',
+    use_ratio_rule: existing.use_ratio_rule,
+    max_ratio: existing.max_ratio,
+    condition_operator: existing.condition_operator || 'OR',
+    include_downloading: Boolean(existing.include_downloading),
+  };
+
+  try {
+    const resp = await fetch('/api/trackers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to toggle rule');
+    updateUI(data);
+    showToast(`${existing.tracker_id}: Rule ${newEnabled ? 'enabled' : 'disabled'}`, 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteTrackerRule(trackerId) {
+  if (!confirm(`Remove tracker '${trackerId}' and its rule from configuration?`)) return;
+  try {
+    const resp = await fetch(`/api/trackers/${encodeURIComponent(trackerId)}`, {
+      method: 'DELETE',
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Delete failed');
+    updateUI(data);
+    showToast(`Deleted tracker ${trackerId}`, 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function manualCancelTransfer(transferId, transferName) {
+  if (!confirm(`Stop seeding and remove "${transferName}" from your Put.io transfer list? (Downloaded files in storage will be kept)`)) {
+    return;
+  }
+  try {
+    const resp = await fetch(`/api/transfers/${transferId}/cancel`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to cancel transfer');
+    updateUI(data);
+    showToast(`Canceled and removed "${transferName}"`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function saveToken() {
+  const tokenVal = document.getElementById('input-putio-token').value.trim();
+  if (!tokenVal) {
+    showToast('Please paste a valid Put.io OAuth token.', 'error');
+    return;
+  }
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ putio_token: tokenVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to verify token');
+    document.getElementById('input-putio-token').value = '';
+    updateUI(data);
+    showToast('Put.io token verified and saved!', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function saveServiceSettings() {
+  const payload = {
+    monitoring_enabled: document.getElementById('chk-monitoring-enabled').checked,
+    auto_discover_trackers: document.getElementById('chk-auto-discover').checked,
+    clean_completed_after_cancel: document.getElementById('chk-clean-after-cancel').checked,
+    dry_run: document.getElementById('chk-dry-run').checked,
+    poll_interval_seconds: Math.max(10, Number(document.getElementById('input-poll-interval').value) || 30),
+  };
+
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to update settings');
+    updateUI(data);
+    showToast('Background service settings saved!', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function toggleMonitoringQuick() {
+  const nextVal = !Boolean(appState.settings?.monitoring_enabled);
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monitoring_enabled: nextVal }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to toggle monitor');
+    updateUI(data);
+    showToast(`24/7 Background Monitor ${nextVal ? 'Resumed' : 'Paused'}`, 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function startOobAuth() {
+  if (oobPollTimer) {
+    clearInterval(oobPollTimer);
+    oobPollTimer = null;
+  }
+  try {
+    const resp = await fetch('/api/auth/oob/start', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Could not start OOB flow');
+
+    const box = document.getElementById('oob-box');
+    const codeDisplay = document.getElementById('oob-code-display');
+    const linkEl = document.getElementById('oob-link');
+    codeDisplay.textContent = data.code;
+    linkEl.href = data.link_url || 'https://app.put.io/link';
+    box.classList.remove('hidden');
+
+    oobPollTimer = setInterval(async () => {
+      try {
+        const chk = await fetch(`/api/auth/oob/check/${encodeURIComponent(data.code)}`);
+        if (!chk.ok) return;
+        const chkData = await chk.json();
+        if (chkData.linked) {
+          clearInterval(oobPollTimer);
+          oobPollTimer = null;
+          box.classList.add('hidden');
+          updateUI(chkData.state);
+          showToast('Successfully linked Put.io account!', 'success');
+        }
+      } catch (_e) {
+        // ignore transient polling errors
+      }
+    }, 3000);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function clearLogs() {
+  if (!confirm('Clear all cancellation log history?')) return;
+  try {
+    const resp = await fetch('/api/logs', { method: 'DELETE' });
+    const data = await resp.json();
+    updateUI(data);
+    showToast('Cleared cancellation logs.', 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Initial load & auto-refresh UI state every 10 seconds
+document.addEventListener('DOMContentLoaded', () => {
+  fetchState();
+  setInterval(fetchState, 10000);
+});

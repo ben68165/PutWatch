@@ -1,0 +1,19 @@
+services:
+  putio-tracker-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: putio-tracker-monitor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - CONFIG_PATH=/data/config.json
+      # Optional: Set your Put.io OAuth token here, or configure/link it directly in the Web GUI
+      - PUTIO_TOKEN=${PUTIO_TOKEN:-}
+      - TZ=Europe/Berlin
+    volumes:
+      - putio_monitor_data:/data
+
+volumes:
+  putio_monitor_data:
