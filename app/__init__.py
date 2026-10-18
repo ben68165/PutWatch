@@ -1,1 +1,1 @@
-"""Put.io Tracker Monitor application package."""
+"""PutWatch application package."""

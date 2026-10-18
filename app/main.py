@@ -39,7 +39,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Put.io Tracker Monitor & Auto-Canceler",
+    title="PutWatch",
     version="1.0.0",
     description="Monitors active Put.io transfers, identifies trackers, and cancels/removes transfers based on per-tracker seeding time and ratio rules.",
     lifespan=lifespan,

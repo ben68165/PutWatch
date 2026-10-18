@@ -1,4 +1,4 @@
-# Put.io Tracker Monitor & Auto-Canceler
+# PutWatch
 
 A 24/7 background service and web application for monitoring active [Put.io](https://put.io) transfers (`GET /v2/transfers/list`), automatically identifying BitTorrent trackers from active transfers, and canceling & removing transfers based on per-tracker **seeding time** and/or **share ratio** rules.
 

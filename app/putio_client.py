@@ -137,7 +137,7 @@ class PutioClient:
     def _headers(self) -> Dict[str, str]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "PutioTrackerMonitor/1.0",
+            "User-Agent": "PutWatch/1.0",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -306,7 +306,7 @@ class PutioClient:
 
     @classmethod
     async def request_oob_code(
-        cls, app_id: int = DEFAULT_OAUTH_APP_ID, client_name: str = "PutioTrackerMonitor"
+        cls, app_id: int = DEFAULT_OAUTH_APP_ID, client_name: str = "PutWatch"
     ) -> str:
         """GET /oauth2/oob/code -> returns 4-8 character code for https://put.io/link."""
         client = cls(token="")

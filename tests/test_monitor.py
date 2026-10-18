@@ -176,7 +176,7 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
 
             r_index = await client.get("/")
             self.assertEqual(r_index.status_code, 200)
-            self.assertIn("Put.io Tracker Monitor", r_index.text)
+            self.assertIn("PutWatch", r_index.text)
 
 
 if __name__ == "__main__":
