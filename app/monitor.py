@@ -279,10 +279,11 @@ class TransferMonitorService:
                     logger.exception("Unexpected error in monitor poll loop: %s", exc)
                     self.last_error = str(exc)
 
-            interval = max(10, int(self.store.get().poll_interval_seconds))
+            interval_minutes = max(1, int(self.store.get().poll_interval_minutes))
+            interval_seconds = interval_minutes * 60
             self._wake_event.clear()
             try:
-                await asyncio.wait_for(self._wake_event.wait(), timeout=float(interval))
+                await asyncio.wait_for(self._wake_event.wait(), timeout=float(interval_seconds))
             except asyncio.TimeoutError:
                 pass
 
@@ -312,6 +313,18 @@ class TransferMonitorService:
                     }
 
                 client = PutioClient(token=cfg.putio_token)
+
+                # If PutWatch OAuth App ID is not registered yet, automatically register "PutWatch"
+                # (referencing https://github.com/ben68165/PutWatch) and remove any leftover swagger-test grant
+                if not cfg.putio_app_id:
+                    app_reg = await client.ensure_putwatch_oauth_app()
+                    if app_reg and app_reg.get("app_id"):
+                        cfg.putio_app_id = int(app_reg["app_id"])
+                        if app_reg.get("token"):
+                            cfg.putio_token = str(app_reg["token"])
+                            client = PutioClient(token=cfg.putio_token)
+                        cfg = self.store.save(cfg)
+
                 raw_transfers = await client.list_transfers()
 
                 # Refresh account info occasionally if missing

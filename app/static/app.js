@@ -1,4 +1,5 @@
 let appState = {
+  app_metadata: {},
   settings: {},
   monitor: {},
   transfers: [],
@@ -36,6 +37,37 @@ function formatDuration(seconds) {
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
   return `${s}s`;
+}
+
+function formatDateTime(isoStr) {
+  if (!isoStr) return '';
+  const dt = new Date(isoStr);
+  if (isNaN(dt.getTime())) return String(isoStr);
+  const tz = (appState.settings && appState.settings.timezone) || 'Europe/Berlin';
+  // Use German / European formatting (DD.MM.YYYY, HH:mm:ss) for Berlin / European timezones
+  const locale = tz.toLowerCase().startsWith('america/') ? 'en-US' : 'de-DE';
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: tz,
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(dt);
+  } catch (_err) {
+    return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(dt);
+  }
 }
 
 function showToast(message, type = 'info') {
@@ -123,11 +155,17 @@ function updateUI(state) {
   const transfers = state.transfers || [];
   const trackers = state.trackers || [];
   const logs = state.activity_log || [];
+  const tz = s.timezone || 'Europe/Berlin';
 
   // Badges
   document.getElementById('badge-transfers-count').textContent = transfers.length;
   document.getElementById('badge-trackers-count').textContent = trackers.length;
   document.getElementById('badge-logs-count').textContent = logs.length;
+
+  const thLogTime = document.getElementById('th-log-time');
+  if (thLogTime) {
+    thLogTime.textContent = `Date & Time (${tz})`;
+  }
 
   // Service status badge
   const statusBadge = document.getElementById('service-status-badge');
@@ -151,7 +189,7 @@ function updateUI(state) {
 
   // Header labels
   document.getElementById('last-poll-label').textContent = m.last_poll_at
-    ? `Last scan: ${m.last_poll_at.replace('T', ' ').replace('Z', ' UTC')}`
+    ? `Last scan: ${formatDateTime(m.last_poll_at)}`
     : 'Last scan: Pending';
 
   if (m.account_info && m.account_info.username) {
@@ -183,7 +221,7 @@ function updateUI(state) {
   document.getElementById('kpi-trackers').textContent = trackers.length;
   document.getElementById('kpi-active-rules').textContent = `${enabledRulesCount} active rule${enabledRulesCount === 1 ? '' : 's'}`;
   document.getElementById('kpi-canceled').textContent = logs.length;
-  document.getElementById('kpi-interval').textContent = `${s.poll_interval_seconds || 30}s`;
+  document.getElementById('kpi-interval').textContent = `${s.poll_interval_minutes || 5}m`;
 
   renderTransfers();
   renderTrackers();
@@ -549,7 +587,7 @@ function renderLogs() {
 
   tbody.innerHTML = logs
     .map((entry) => {
-      const timeFormatted = String(entry.timestamp || '').replace('T', ' ').replace('Z', '');
+      const timeFormatted = formatDateTime(entry.timestamp);
       return `
         <tr class="hover:bg-slate-800/40">
           <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
@@ -588,10 +626,17 @@ function renderSettingsForm() {
   document.getElementById('chk-auto-discover').checked = Boolean(s.auto_discover_trackers);
   document.getElementById('chk-clean-after-cancel').checked = Boolean(s.clean_completed_after_cancel);
   document.getElementById('chk-dry-run').checked = Boolean(s.dry_run);
-  document.getElementById('input-poll-interval').value = s.poll_interval_seconds || 30;
+  document.getElementById('input-poll-interval').value = s.poll_interval_minutes || 5;
+
+  const appIdInput = document.getElementById('input-putio-app-id');
+  if (appIdInput && document.activeElement !== appIdInput) {
+    appIdInput.value = s.putio_app_id || '';
+  }
 
   const statusEl = document.getElementById('settings-conn-status');
   const detailEl = document.getElementById('settings-conn-detail');
+  const appInfoEl = document.getElementById('settings-app-info');
+
   if (m.account_info && m.account_info.username) {
     statusEl.className = 'font-semibold text-emerald-400';
     statusEl.textContent = `Connected as @${m.account_info.username}`;
@@ -603,7 +648,15 @@ function renderSettingsForm() {
   } else {
     statusEl.className = 'font-semibold text-red-400';
     statusEl.textContent = 'Not Configured';
-    detailEl.textContent = 'Please enter a Put.io OAuth token or generate a link code below.';
+    detailEl.textContent = 'Please enter a Put.io OAuth token or generate a PutWatch device code below.';
+  }
+
+  if (appInfoEl) {
+    if (s.putio_app_id) {
+      appInfoEl.innerHTML = `Registered Put.io OAuth App: <strong class="text-white">PutWatch</strong> (ID: <code class="text-amber-300">${s.putio_app_id}</code> &bull; <a href="https://github.com/ben68165/PutWatch" target="_blank" rel="noopener" class="text-amber-400 hover:underline">github.com/ben68165/PutWatch</a>)`;
+    } else {
+      appInfoEl.innerHTML = `OAuth App Metadata: <strong class="text-white">PutWatch</strong> (<a href="https://github.com/ben68165/PutWatch" target="_blank" rel="noopener" class="text-amber-400 hover:underline">github.com/ben68165/PutWatch</a>)`;
+    }
   }
 }
 
@@ -825,20 +878,24 @@ async function saveToken() {
     if (!resp.ok) throw new Error(data.detail || 'Failed to verify token');
     document.getElementById('input-putio-token').value = '';
     updateUI(data);
-    showToast('Put.io token verified and saved!', 'success');
+    showToast('Put.io token verified and PutWatch OAuth App configured!', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
 async function saveServiceSettings() {
+  const appIdRaw = document.getElementById('input-putio-app-id')?.value.trim();
   const payload = {
     monitoring_enabled: document.getElementById('chk-monitoring-enabled').checked,
     auto_discover_trackers: document.getElementById('chk-auto-discover').checked,
     clean_completed_after_cancel: document.getElementById('chk-clean-after-cancel').checked,
     dry_run: document.getElementById('chk-dry-run').checked,
-    poll_interval_seconds: Math.max(10, Number(document.getElementById('input-poll-interval').value) || 30),
+    poll_interval_minutes: Math.max(1, Number(document.getElementById('input-poll-interval').value) || 5),
   };
+  if (appIdRaw !== undefined && appIdRaw !== '') {
+    payload.putio_app_id = Number(appIdRaw) || 0;
+  }
 
   try {
     const resp = await fetch('/api/settings', {
@@ -877,8 +934,11 @@ async function startOobAuth() {
     clearInterval(oobPollTimer);
     oobPollTimer = null;
   }
+  const appIdInput = document.getElementById('input-putio-app-id')?.value.trim();
+  const query = appIdInput && Number(appIdInput) > 0 ? `?app_id=${encodeURIComponent(appIdInput)}` : '';
+
   try {
-    const resp = await fetch('/api/auth/oob/start', { method: 'POST' });
+    const resp = await fetch(`/api/auth/oob/start${query}`, { method: 'POST' });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'Could not start OOB flow');
 
@@ -899,7 +959,7 @@ async function startOobAuth() {
           oobPollTimer = null;
           box.classList.add('hidden');
           updateUI(chkData.state);
-          showToast('Successfully linked Put.io account!', 'success');
+          showToast('Successfully linked Put.io account with PutWatch!', 'success');
         }
       } catch (_e) {
         // ignore transient polling errors

@@ -158,7 +158,7 @@
       <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
         <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Check Interval</div>
         <div class="mt-1 flex items-baseline justify-between">
-          <span id="kpi-interval" class="text-2xl font-bold text-white">30s</span>
+          <span id="kpi-interval" class="text-2xl font-bold text-white">5m</span>
           <button onclick="toggleMonitoringQuick()" id="btn-quick-toggle" class="text-xs text-amber-400 hover:underline cursor-pointer">
             Pause Monitor
           </button>
@@ -262,7 +262,7 @@
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="border-b border-slate-800 text-xs uppercase text-slate-400 bg-slate-950/50">
-                <th class="py-3 px-4">Time (UTC)</th>
+                <th id="th-log-time" class="py-3 px-4">Date &amp; Time</th>
                 <th class="py-3 px-4">Transfer</th>
                 <th class="py-3 px-4">Tracker</th>
                 <th class="py-3 px-4">Metrics at Cancel</th>
@@ -282,9 +282,9 @@
         <!-- Put.io API Connection Card -->
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
           <div>
-            <h2 class="text-base font-semibold text-white">Put.io API Authentication</h2>
+            <h2 class="text-base font-semibold text-white">PutWatch &mdash; Put.io API Authentication</h2>
             <p class="text-xs text-slate-400 mt-1">
-              Connect your Put.io account using an OAuth2 Token or link interactively with a 1-click Put.io link code.
+              Connect your Put.io account using an OAuth2 Token or link via a Put.io Device Code. Once connected, PutWatch registers its own dedicated OAuth App (<a href="https://github.com/ben68165/PutWatch" target="_blank" rel="noopener" class="text-amber-400 hover:underline">github.com/ben68165/PutWatch</a>) in your Put.io account.
             </p>
           </div>
 
@@ -292,6 +292,7 @@
           <div id="settings-account-box" class="p-3.5 rounded-lg bg-slate-950 border border-slate-800 text-xs space-y-1">
             <div class="text-slate-400">Connection Status: <span id="settings-conn-status" class="font-semibold text-slate-200">Checking...</span></div>
             <div id="settings-conn-detail" class="text-slate-500"></div>
+            <div id="settings-app-info" class="text-slate-400 pt-1"></div>
           </div>
 
           <!-- Option 1: Direct OAuth Token -->
@@ -314,27 +315,43 @@
               </button>
             </div>
             <p class="text-[11px] text-slate-500">
-              Tip: In Portainer, you can also pass the <code class="text-slate-300">PUTIO_TOKEN</code> environment variable in your Stack config.
+              Tip: In Portainer, you can also pass <code class="text-slate-300">PUTIO_TOKEN</code> as an environment variable in your Stack config.
             </p>
           </div>
 
           <!-- Option 2: 1-Click OOB Code Linking -->
           <div class="pt-4 border-t border-slate-800 space-y-3">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 class="text-xs font-semibold text-slate-200 uppercase tracking-wider">Or Link via Put.io Device Code</h3>
-                <p class="text-xs text-slate-400 mt-0.5">Generate a link code and enter it at <code class="text-amber-300">app.put.io/link</code></p>
+                <h3 class="text-xs font-semibold text-slate-200 uppercase tracking-wider">Link via Put.io Device Code</h3>
+                <p class="text-xs text-slate-400 mt-0.5">
+                  Links as <strong class="text-white">PutWatch</strong> (<code class="text-amber-300">github.com/ben68165/PutWatch</code>) at <code class="text-amber-300">app.put.io/link</code>
+                </p>
               </div>
               <button
                 onclick="startOobAuth()"
-                class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 cursor-pointer"
+                class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 cursor-pointer shrink-0"
               >
-                Generate Link Code
+                Generate PutWatch Device Code
               </button>
             </div>
+
+            <div class="flex items-center gap-2">
+              <label class="text-[11px] text-slate-400 whitespace-nowrap">PutWatch OAuth App ID (optional):</label>
+              <input
+                type="number"
+                id="input-putio-app-id"
+                placeholder="Auto-assigned on connect (or enter Client ID)"
+                class="flex-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
             <div id="oob-box" class="hidden p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 text-center space-y-2">
               <div class="text-xs text-amber-200">Visit <a id="oob-link" href="https://app.put.io/link" target="_blank" rel="noopener" class="underline font-bold">https://app.put.io/link</a> and enter code:</div>
               <div id="oob-code-display" class="text-2xl font-mono font-black tracking-widest text-amber-400">----</div>
+              <div class="text-[11px] text-slate-300">
+                App: <strong>PutWatch</strong> &bull; Repo: <a href="https://github.com/ben68165/PutWatch" target="_blank" rel="noopener" class="text-amber-300 underline">github.com/ben68165/PutWatch</a>
+              </div>
               <div class="text-[11px] text-amber-300/80 animate-pulse">Waiting for you to link the code on Put.io...</div>
             </div>
           </div>
@@ -384,15 +401,15 @@
 
             <div>
               <label class="block text-xs font-medium text-slate-300 mb-1">
-                Background Poll Interval (seconds, 10 - 3600)
+                Background Poll Interval (minutes, 1 - 1440)
               </label>
               <input
                 type="number"
                 id="input-poll-interval"
-                min="10"
-                max="3600"
-                step="5"
-                value="30"
+                min="1"
+                max="1440"
+                step="1"
+                value="5"
                 class="w-40 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-amber-500"
               />
             </div>

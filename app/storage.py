@@ -34,25 +34,35 @@ class ConfigStore:
     def _load_or_init(self) -> AppConfig:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         cfg = AppConfig()
-        if self.path.exists():
+        file_existed = self.path.exists()
+        if file_existed:
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
+                # Migrate legacy poll_interval_seconds if present
+                if "poll_interval_Minutes" not in raw and "poll_interval_minutes" not in raw and "poll_interval_seconds" in raw:
+                    secs = int(raw.get("poll_interval_seconds") or 300)
+                    raw["poll_interval_minutes"] = max(1, round(secs / 60))
                 cfg = AppConfig.model_validate(raw)
             except Exception as exc:
                 logger.error("Failed to parse config file %s: %s", self.path, exc)
 
-        # Allow environment variables PUTIO_TOKEN and POLL_INTERVAL to seed config
+        # Allow environment variables PUTIO_TOKEN, PUTIO_APP_ID, and POLL_INTERVAL (in minutes)
         env_token = os.environ.get("PUTIO_TOKEN", "").strip()
+        env_app_id = os.environ.get("PUTIO_APP_ID", "").strip()
         env_interval = os.environ.get("POLL_INTERVAL", "").strip()
         modified = False
+
         if env_token and not cfg.putio_token:
             cfg.putio_token = env_token
             modified = True
-        if env_interval.isdigit() and not self.path.exists():
-            cfg.poll_interval_seconds = max(10, min(3600, int(env_interval)))
+        if env_app_id.isdigit() and not cfg.putio_app_id:
+            cfg.putio_app_id = int(env_app_id)
+            modified = True
+        if env_interval.isdigit() and not file_existed:
+            cfg.poll_interval_minutes = max(1, min(1440, int(env_interval)))
             modified = True
 
-        if modified or not self.path.exists():
+        if modified or not file_existed:
             self._write(cfg)
 
         return cfg

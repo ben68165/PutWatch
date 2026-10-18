@@ -10,7 +10,8 @@ services:
     environment:
       - CONFIG_PATH=/data/config.json
       - PUTIO_TOKEN=${PUTIO_TOKEN:-}
-      - POLL_INTERVAL=${POLL_INTERVAL:-30}
+      - PUTIO_APP_ID=${PUTIO_APP_ID:-}
+      - POLL_INTERVAL=${POLL_INTERVAL:-5}
       - TZ=${TZ:-Europe/Berlin}
     volumes:
       - putio_monitor_data:/data

@@ -127,6 +127,10 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
                 return_value={"username": "tester", "mail": "test@example.com"},
             ), patch(
+                "app.monitor.PutioClient.ensure_putwatch_oauth_app",
+                new_callable=AsyncMock,
+                return_value={"app_id": 9999, "token": "putwatch_app_token"},
+            ), patch(
                 "app.monitor.PutioClient.cancel_and_remove_transfer",
                 new_callable=AsyncMock,
             ) as mock_cancel:

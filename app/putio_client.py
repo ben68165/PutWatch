@@ -7,10 +7,16 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
+from app.models import (
+    PUTWATCH_APP_DESCRIPTION,
+    PUTWATCH_APP_NAME,
+    PUTWATCH_REPO_URL,
+)
+
 logger = logging.getLogger("putio_monitor.putio_client")
 
 PUTIO_API_BASE = "https://api.put.io/v2"
-DEFAULT_OAUTH_APP_ID = 3270  # Official Swagger / OOB app ID from Put.io OpenAPI spec
+FALLBACK_BOOTSTRAP_APP_ID = 1  # Put.io official web/CLI bootstrap client ID if no custom PUTIO_APP_ID is set yet
 
 
 class PutioApiError(Exception):
@@ -30,10 +36,6 @@ class PutioApiError(Exception):
 def normalize_tracker_url(raw_url: str) -> Optional[Tuple[str, str]]:
     """
     Extract a normalized tracker hostname (tracker_id) and cleaned raw URL from a tracker string.
-    Examples:
-      'udp://tracker.opentrackr.org:1337/announce' -> ('tracker.opentrackr.org', 'udp://tracker.opentrackr.org:1337/announce')
-      'https://nyaa.tracker.wf:7777/announce' -> ('nyaa.tracker.wf', 'https://nyaa.tracker.wf:7777/announce')
-      'tracker.example.com' -> ('tracker.example.com', 'tracker.example.com')
     """
     if not raw_url or not isinstance(raw_url, str):
         return None
@@ -41,7 +43,6 @@ def normalize_tracker_url(raw_url: str) -> Optional[Tuple[str, str]]:
     if not cleaned:
         return None
 
-    # Ignore non-tracker placeholders
     if cleaned.lower() in ("none", "null", "n/a", "-"):
         return None
 
@@ -51,7 +52,6 @@ def normalize_tracker_url(raw_url: str) -> Optional[Tuple[str, str]]:
         host = (parsed.hostname or "").strip().lower()
         if not host:
             return None
-        # Strip leading 'www.' if present for cleaner grouping
         if host.startswith("www.") and len(host) > 4:
             host = host[4:]
         return host, raw_url.strip()
@@ -62,12 +62,6 @@ def normalize_tracker_url(raw_url: str) -> Optional[Tuple[str, str]]:
 def extract_trackers_from_transfer(transfer: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
     Inspect a Put.io transfer dict and extract all associated trackers as (tracker_id, raw_url) pairs.
-    Checks:
-      1. `transfer['tracker']` (primary tracker field returned by Put.io)
-      2. `transfer['trackers']` (if array of tracker URLs/objects is present)
-      3. `transfer['source']` (parses `tr=` parameters from magnet links or domain from torrent URLs)
-    Returns a deduplicated list of (tracker_id, sample_url) in priority order.
-    If no tracker is found, returns [('untracked', 'Direct / DHT (No Tracker)')].
     """
     discovered: List[Tuple[str, str]] = []
     seen_ids: set[str] = set()
@@ -87,7 +81,6 @@ def extract_trackers_from_transfer(transfer: Dict[str, Any]) -> List[Tuple[str, 
         if not isinstance(raw, str):
             return
 
-        # Support comma/semicolon/newline separated tracker strings
         for part in raw.replace(";", ",").replace("\n", ",").split(","):
             norm = normalize_tracker_url(part)
             if norm:
@@ -96,13 +89,9 @@ def extract_trackers_from_transfer(transfer: Dict[str, Any]) -> List[Tuple[str, 
                     seen_ids.add(t_id)
                     discovered.append((t_id, sample))
 
-    # 1. Explicit `tracker` field
     _add_candidate(transfer.get("tracker"))
-
-    # 2. Explicit `trackers` field (list or string)
     _add_candidate(transfer.get("trackers"))
 
-    # 3. `source` field (magnet:?xt=...&tr=... or http(s) torrent link)
     source = transfer.get("source")
     if isinstance(source, str) and source.strip():
         src = source.strip()
@@ -113,7 +102,6 @@ def extract_trackers_from_transfer(transfer: Dict[str, Any]) -> List[Tuple[str, 
                 for tr_url in qs.get(key, []):
                     _add_candidate(tr_url)
         elif src.lower().startswith(("http://", "https://")) and not discovered:
-            # If it's a torrent file downloaded from a tracker URL and no other tracker field was set
             norm = normalize_tracker_url(src)
             if norm:
                 t_id, sample = norm
@@ -137,7 +125,7 @@ class PutioClient:
     def _headers(self) -> Dict[str, str]:
         headers = {
             "Accept": "application/json",
-            "User-Agent": "PutWatch/1.0",
+            "User-Agent": f"{PUTWATCH_APP_NAME}/1.0 (+{PUTWATCH_REPO_URL})",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -173,7 +161,6 @@ class PutioClient:
                         f"Network error contacting Put.io API: {exc}"
                     ) from exc
 
-                # Respect 429 rate limiting headers from Put.io API
                 if resp.status_code == 429 and attempt == 0:
                     reset_hdr = resp.headers.get("X-RateLimit-Reset")
                     wait_secs = 3.0
@@ -238,11 +225,7 @@ class PutioClient:
         return res.get("transfer", res)
 
     async def cancel_transfers(self, transfer_ids: List[int]) -> Dict[str, Any]:
-        """
-        POST /transfers/cancel
-        According to Put.io OpenAPI 2.8.11:
-        'If transfer is in SEEDING state, stops seeding. Else, removes transfer entry. Does not remove their files.'
-        """
+        """POST /transfers/cancel."""
         if not transfer_ids:
             return {}
         ids_csv = ",".join(str(tid) for tid in transfer_ids)
@@ -253,20 +236,14 @@ class PutioClient:
         )
 
     async def clean_transfers(self, transfer_ids: Optional[List[int]] = None) -> Dict[str, Any]:
-        """
-        POST /transfers/clean
-        'Clean finished transfers. Only removes transfer entries, does not remove files.'
-        """
+        """POST /transfers/clean."""
         data: Optional[Dict[str, Any]] = None
         if transfer_ids:
             data = {"transfer_ids": ",".join(str(tid) for tid in transfer_ids)}
         return await self._request("POST", "/transfers/clean", data=data)
 
     async def remove_transfers(self, transfer_ids: List[int]) -> Dict[str, Any]:
-        """
-        POST /transfers/remove
-        Removes specified transfer entries by ID.
-        """
+        """POST /transfers/remove."""
         if not transfer_ids:
             return {}
         ids_csv = ",".join(str(tid) for tid in transfer_ids)
@@ -284,17 +261,12 @@ class PutioClient:
     ) -> None:
         """
         Cancels a transfer and removes its entry from the Put.io transfer list without deleting storage files.
-        Note on Put.io API behavior:
-        - When a transfer is in SEEDING state, calling `/transfers/cancel` stops seeding (transitioning it to COMPLETED).
-        - Calling `/transfers/clean` (or a second `/transfers/cancel` / `/transfers/remove`) removes the completed
-          transfer entry from the transfer list.
         """
         status_upper = (current_status or "").upper()
         await self.cancel_transfers([transfer_id])
 
         if clean_after_cancel and status_upper in ("SEEDING", "COMPLETED", "COMPLETING"):
             await asyncio.sleep(0.6)
-            # Try clean and cancel/remove to guarantee the entry disappears from the transfer list
             try:
                 await self.clean_transfers([transfer_id])
             except PutioApiError:
@@ -304,22 +276,107 @@ class PutioClient:
             except PutioApiError:
                 pass
 
+    async def ensure_putwatch_oauth_app(self) -> Optional[Dict[str, Any]]:
+        """
+        Ensures a dedicated 'PutWatch' OAuth Application exists in the user's Put.io account
+        with name='PutWatch', website='https://github.com/ben68165/PutWatch', and description.
+        Returns {'app_id': int, 'token': Optional[str], 'app': dict}.
+        Also revokes any leftover 'swagger-test' (app_id=3270) grants if present.
+        """
+        app_payload = {
+            "name": PUTWATCH_APP_NAME,
+            "description": PUTWATCH_APP_DESCRIPTION,
+            "website": PUTWATCH_REPO_URL,
+            "callback": PUTWATCH_REPO_URL,
+            "hidden": "true",
+        }
+        try:
+            res = await self._request("GET", "/oauth/apps")
+            apps = res.get("apps", [])
+            target_app = None
+            if isinstance(apps, list):
+                for a in apps:
+                    if isinstance(a, dict) and str(a.get("name", "")).strip().lower() == PUTWATCH_APP_NAME.lower():
+                        target_app = a
+                        break
+
+            if target_app and target_app.get("id"):
+                app_id = int(target_app["id"])
+                # Ensure website & description match PutWatch and the user's GitHub repo
+                try:
+                    await self._request(
+                        "POST",
+                        f"/oauth/apps/{app_id}",
+                        data={**app_payload, "id": str(app_id)},
+                    )
+                except PutioApiError:
+                    pass
+            else:
+                created = await self._request(
+                    "POST",
+                    "/oauth/apps/register",
+                    data=app_payload,
+                )
+                target_app = created.get("app") or created
+                app_id = int(target_app["id"])
+
+            # Fetch the dedicated token for the PutWatch OAuth app
+            details = await self._request("GET", f"/oauth/apps/{app_id}")
+            app_token = details.get("token")
+
+            # Clean up any old swagger-test (app_id 3270) grant if we switched to the PutWatch app token
+            if app_token:
+                try:
+                    grants_res = await self._request("GET", "/oauth/grants/")
+                    for g in grants_res.get("apps", []):
+                        if isinstance(g, dict) and (
+                            g.get("id") == 3270
+                            or str(g.get("name", "")).lower() == "swagger-test"
+                        ):
+                            await self._request("POST", f"/oauth/grants/{g['id']}/delete")
+                except PutioApiError:
+                    pass
+
+            return {
+                "app_id": app_id,
+                "token": str(app_token) if app_token else None,
+                "app": details.get("app", target_app),
+            }
+        except Exception as exc:
+            logger.warning("Could not auto-register PutWatch OAuth app: %s", exc)
+            return None
+
     @classmethod
     async def request_oob_code(
-        cls, app_id: int = DEFAULT_OAUTH_APP_ID, client_name: str = "PutWatch"
-    ) -> str:
-        """GET /oauth2/oob/code -> returns 4-8 character code for https://put.io/link."""
+        cls,
+        app_id: Optional[int] = None,
+        client_name: str = PUTWATCH_APP_NAME,
+    ) -> Dict[str, Any]:
+        """
+        GET /oauth2/oob/code -> returns {'code': str, 'qr_code_url': str, 'app_id_used': int}.
+        Uses the user's PutWatch OAuth App ID if configured, otherwise FALLBACK_BOOTSTRAP_APP_ID (1),
+        and immediately registers/switches to the dedicated 'PutWatch' OAuth App (referencing
+        https://github.com/ben68165/PutWatch) as soon as the code is linked.
+        """
+        effective_app_id = int(app_id) if app_id else FALLBACK_BOOTSTRAP_APP_ID
         client = cls(token="")
         res = await client._request(
             "GET",
             "/oauth2/oob/code",
-            params={"app_id": app_id, "client_name": client_name},
+            params={
+                "app_id": effective_app_id,
+                "client_name": client_name,
+            },
             require_auth=False,
         )
         code = res.get("code")
         if not code:
             raise PutioApiError("Did not receive an OOB link code from Put.io.")
-        return str(code)
+        return {
+            "code": str(code),
+            "qr_code_url": res.get("qr_code_url"),
+            "app_id_used": effective_app_id,
+        }
 
     @classmethod
     async def check_oob_code(cls, code: str) -> Optional[str]:

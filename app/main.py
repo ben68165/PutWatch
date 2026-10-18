@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -8,10 +9,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.models import (
+    PUTWATCH_APP_DESCRIPTION,
+    PUTWATCH_APP_NAME,
+    PUTWATCH_REPO_URL,
     ActivityLogEntry,
     SettingsUpdateRequest,
     TrackerRule,
@@ -39,9 +43,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="PutWatch",
+    title=PUTWATCH_APP_NAME,
     version="1.0.0",
-    description="Monitors active Put.io transfers, identifies trackers, and cancels/removes transfers based on per-tracker seeding time and ratio rules.",
+    description=PUTWATCH_APP_DESCRIPTION,
     lifespan=lifespan,
 )
 
@@ -58,6 +62,10 @@ def _mask_token(token: str) -> str:
     return f"{token[:4]}...{token[-4:]}"
 
 
+def _configured_timezone() -> str:
+    return (os.environ.get("TZ") or "Europe/Berlin").strip()
+
+
 @app.get("/", include_in_schema=False)
 async def serve_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -68,6 +76,8 @@ async def healthcheck() -> Dict[str, Any]:
     cfg = store.get()
     return {
         "status": "ok",
+        "app": PUTWATCH_APP_NAME,
+        "repo": PUTWATCH_REPO_URL,
         "monitoring_enabled": cfg.monitoring_enabled,
         "token_configured": bool(cfg.putio_token),
         "last_poll_at": monitor_service.last_poll_at,
@@ -87,14 +97,21 @@ async def get_state() -> Dict[str, Any]:
     )
 
     return {
+        "app_metadata": {
+            "name": PUTWATCH_APP_NAME,
+            "repo_url": PUTWATCH_REPO_URL,
+            "description": PUTWATCH_APP_DESCRIPTION,
+        },
         "settings": {
             "has_token": bool(cfg.putio_token),
             "masked_token": _mask_token(cfg.putio_token),
+            "putio_app_id": cfg.putio_app_id,
             "monitoring_enabled": cfg.monitoring_enabled,
-            "poll_interval_seconds": cfg.poll_interval_seconds,
+            "poll_interval_minutes": cfg.poll_interval_minutes,
             "dry_run": cfg.dry_run,
             "auto_discover_trackers": cfg.auto_discover_trackers,
             "clean_completed_after_cancel": cfg.clean_completed_after_cancel,
+            "timezone": _configured_timezone(),
         },
         "monitor": {
             "is_polling": monitor_service.is_polling,
@@ -149,16 +166,17 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
 
     if req.putio_token is not None:
         cleaned_token = req.putio_token.strip()
-        # Allow clearing or updating the token (ignore if masked placeholder sent)
         if "..." not in cleaned_token:
             if cleaned_token != cfg.putio_token:
                 cfg.putio_token = cleaned_token
                 token_changed = True
 
+    if req.putio_app_id is not None:
+        cfg.putio_app_id = req.putio_app_id if req.putio_app_id > 0 else None
     if req.monitoring_enabled is not None:
         cfg.monitoring_enabled = req.monitoring_enabled
-    if req.poll_interval_seconds is not None:
-        cfg.poll_interval_seconds = max(10, min(3600, req.poll_interval_seconds))
+    if req.poll_interval_minutes is not None:
+        cfg.poll_interval_minutes = max(1, min(1440, req.poll_interval_minutes))
     if req.dry_run is not None:
         cfg.dry_run = req.dry_run
     if req.auto_discover_trackers is not None:
@@ -174,6 +192,13 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
             try:
                 client = PutioClient(token=cfg.putio_token)
                 monitor_service.account_info = await client.get_account_info()
+                # Ensure dedicated PutWatch OAuth app is registered in user's Put.io account
+                app_reg = await client.ensure_putwatch_oauth_app()
+                if app_reg and app_reg.get("app_id"):
+                    cfg.putio_app_id = int(app_reg["app_id"])
+                    if app_reg.get("token"):
+                        cfg.putio_token = str(app_reg["token"])
+                    store.save(cfg)
                 monitor_service.last_error = None
             except PutioApiError as exc:
                 monitor_service.last_error = f"Invalid Put.io token: {exc}"
@@ -191,12 +216,29 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/auth/oob/start")
-async def start_oob_auth() -> Dict[str, Any]:
+async def start_oob_auth(
+    app_id: Optional[int] = Query(
+        default=None,
+        description="Optional Put.io OAuth App ID override.",
+    )
+) -> Dict[str, Any]:
+    cfg = store.get()
+    if app_id and app_id > 0 and app_id != cfg.putio_app_id:
+        cfg.putio_app_id = app_id
+        store.save(cfg)
+
     try:
-        code = await PutioClient.request_oob_code()
+        oob_info = await PutioClient.request_oob_code(
+            app_id=cfg.putio_app_id,
+            client_name=PUTWATCH_APP_NAME,
+        )
         return {
-            "code": code,
+            "code": oob_info["code"],
+            "qr_code_url": oob_info.get("qr_code_url"),
+            "app_id_used": oob_info.get("app_id_used"),
             "link_url": "https://app.put.io/link",
+            "app_name": PUTWATCH_APP_NAME,
+            "repo_url": PUTWATCH_REPO_URL,
         }
     except PutioApiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -214,15 +256,23 @@ async def check_oob_auth(code: str) -> Dict[str, Any]:
 
     cfg = store.get()
     cfg.putio_token = token
-    store.save(cfg)
 
     try:
         client = PutioClient(token=token)
+        # Immediately register/update the dedicated 'PutWatch' OAuth App (referencing
+        # https://github.com/ben68165/PutWatch) and adopt its PutWatch token & app_id
+        app_reg = await client.ensure_putwatch_oauth_app()
+        if app_reg and app_reg.get("app_id"):
+            cfg.putio_app_id = int(app_reg["app_id"])
+            if app_reg.get("token"):
+                cfg.putio_token = str(app_reg["token"])
+                client = PutioClient(token=cfg.putio_token)
         monitor_service.account_info = await client.get_account_info()
         monitor_service.last_error = None
     except PutioApiError:
         pass
 
+    store.save(cfg)
     await monitor_service.poll_once(execute_cancellations=cfg.monitoring_enabled)
     return {
         "linked": True,
@@ -294,7 +344,6 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
 
     store.upsert_tracker(rule)
 
-    # Re-evaluate cached transfers or poll if token is configured
     if cfg.putio_token:
         await monitor_service.poll_once(execute_cancellations=cfg.monitoring_enabled)
 
@@ -317,7 +366,6 @@ async def manual_cancel_transfer(transfer_id: int) -> Dict[str, Any]:
     if not cfg.putio_token:
         raise HTTPException(status_code=400, detail="Put.io token is not configured.")
 
-    # Find transfer metadata from cache if available
     cached = next(
         (t for t in monitor_service.cached_transfers if int(t.get("id") or 0) == transfer_id),
         None,

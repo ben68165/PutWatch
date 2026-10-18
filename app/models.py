@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field
 
 ConditionOperator = Literal["OR", "AND"]
 
+PUTWATCH_APP_NAME = "PutWatch"
+PUTWATCH_REPO_URL = "https://github.com/ben68165/PutWatch"
+PUTWATCH_APP_DESCRIPTION = (
+    "PutWatch - Automatically monitors active Put.io transfers and cancels/removes "
+    "transfers based on per-tracker seeding time and share ratio rules."
+)
+
 
 class TrackerRule(BaseModel):
     """Configuration and cancellation rule for a specific tracker."""
@@ -95,15 +102,19 @@ class AppConfig(BaseModel):
         default="",
         description="Put.io OAuth2 Bearer Token.",
     )
+    putio_app_id: Optional[int] = Field(
+        default=None,
+        description="Put.io OAuth App ID (Client ID) registered for PutWatch (https://github.com/ben68165/PutWatch).",
+    )
     monitoring_enabled: bool = Field(
         default=True,
         description="Master switch for the 24/7 background monitoring worker.",
     )
-    poll_interval_seconds: int = Field(
-        default=30,
-        ge=10,
-        le=3600,
-        description="How often (in seconds) to poll Put.io transfers and evaluate tracker rules.",
+    poll_interval_minutes: int = Field(
+        default=5,
+        ge=1,
+        le=1440,
+        description="How often (in minutes) to poll Put.io transfers and evaluate tracker rules.",
     )
     dry_run: bool = Field(
         default=False,
@@ -143,8 +154,9 @@ class AppConfig(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     putio_token: Optional[str] = None
+    putio_app_id: Optional[int] = None
     monitoring_enabled: Optional[bool] = None
-    poll_interval_seconds: Optional[int] = Field(default=None, ge=10, le=3600)
+    poll_interval_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
     dry_run: Optional[bool] = None
     auto_discover_trackers: Optional[bool] = None
     clean_completed_after_cancel: Optional[bool] = None
