@@ -10,6 +10,7 @@ let appState = {
 
 let currentTab = 'transfers';
 let currentTransferGrouping = 'none';
+let expandedTransferGroups = new Set();
 let oobPollTimer = null;
 
 function escapeHtml(str) {
@@ -291,7 +292,18 @@ function toggleTransferGroupBy(mode) {
   } else {
     currentTransferGrouping = mode;
   }
+  // Collapse all groups by default whenever a grouping is selected
+  expandedTransferGroups.clear();
   updateTransferGroupButtonsUI();
+  renderTransfers();
+}
+
+function toggleTransferGroupExpand(groupId) {
+  if (expandedTransferGroups.has(groupId)) {
+    expandedTransferGroups.delete(groupId);
+  } else {
+    expandedTransferGroups.add(groupId);
+  }
   renderTransfers();
 }
 
@@ -318,9 +330,9 @@ function updateTransferGroupButtonsUI() {
   if (hint) {
     const hintLabels = {
       none: '(Ungrouped)',
-      tracker: '(Grouped by Tracker — click active button to ungroup)',
-      status: '(Grouped by Status — click active button to ungroup)',
-      protection: '(Grouped by Protected / Unprotected — click active button to ungroup)',
+      tracker: '(Grouped by Tracker — click a group to expand/collapse)',
+      status: '(Grouped by Status — click a group to expand/collapse)',
+      protection: '(Grouped by Protected / Unprotected — click a group to expand/collapse)',
     };
     hint.textContent = hintLabels[currentTransferGrouping] || '(Ungrouped)';
   }
@@ -552,7 +564,7 @@ function renderTransfers() {
         const isEnabled = configuredRule && configuredRule.enabled;
         const actionHtml = `
           <button
-            onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
+            onclick="event.stopPropagation(); openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
             class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-amber-400 border border-slate-700 cursor-pointer"
           >
             ${isEnabled ? 'Edit Active Rule' : '+ Configure Rule'}
@@ -624,29 +636,54 @@ function renderTransfers() {
 
   container.innerHTML = groups
     .map((g) => {
+      const groupId = `${currentTransferGrouping}:${g.key}`;
+      const isExpanded = expandedTransferGroups.has(groupId);
       const totalSize = g.items.reduce((acc, item) => acc + (Number(item.size) || 0), 0);
+      const totalUpSpeed = g.items.reduce((acc, item) => acc + (Number(item.up_speed) || 0), 0);
       const bodyHtml =
         g.items.length > 0
           ? g.items.map((t) => renderSingleTransferCardHtml(t, hideNames)).join('')
           : `<div class="text-xs text-slate-500 py-3 px-2 italic">No transfers currently in this group.</div>`;
 
       return `
-        <div class="bg-slate-950/60 border border-slate-800/90 rounded-xl p-4 space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800/80">
+        <div class="bg-slate-950/60 border border-slate-800/90 rounded-xl overflow-hidden transition">
+          <div
+            onclick="toggleTransferGroupExpand(${JSON.stringify(groupId).replace(/"/g, '&quot;')})"
+            role="button"
+            aria-expanded="${isExpanded ? 'true' : 'false'}"
+            class="flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 cursor-pointer select-none hover:bg-slate-900/80 transition"
+          >
             <div class="flex flex-wrap items-center gap-2.5">
+              <svg
+                class="w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-400' : ''}"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+              </svg>
               ${g.titleHtml}
               <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-slate-800 text-slate-300">
                 ${g.items.length} transfer${g.items.length === 1 ? '' : 's'}
               </span>
               <span class="text-xs font-mono text-slate-400">
-                Total: ${formatBytes(totalSize)}
+                Total: ${formatBytes(totalSize)}${totalUpSpeed > 0 ? ` &bull; &uarr;${formatBytes(totalUpSpeed)}/s` : ''}
               </span>
             </div>
-            <div>${g.actionHtml}</div>
+            <div class="flex items-center gap-2.5">
+              ${g.actionHtml}
+              <span class="text-[11px] font-medium ${isExpanded ? 'text-amber-400' : 'text-slate-500'}">
+                ${isExpanded ? 'Click to collapse' : 'Click to expand'}
+              </span>
+            </div>
           </div>
-          <div class="space-y-3">
-            ${bodyHtml}
-          </div>
+          ${
+            isExpanded
+              ? `<div class="p-4 pt-3 border-t border-slate-800/80 space-y-3 bg-slate-950/40">
+                   ${bodyHtml}
+                 </div>`
+              : ''
+          }
         </div>`;
     })
     .join('');
