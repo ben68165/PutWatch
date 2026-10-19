@@ -150,6 +150,76 @@ class TestTrackerMonitor(unittest.TestCase):
         )
         self.assertTrue(ev_fast_expired["should_cancel"])
 
+    def test_cancel_completed_on_first_scan_and_token_masking(self) -> None:
+        from app.main import _mask_token
+        from app.monitor import compute_keep_alive_protections
+
+        # Verify full token anonymization (no plaintext characters leaked)
+        self.assertEqual(_mask_token(""), "")
+        self.assertEqual(_mask_token("secret_putio_token_12345"), "•" * 16)
+
+        rule = TrackerRule(
+            tracker_id="tracker.cached.org",
+            enabled=True,
+            cancel_completed_on_first_scan=True,
+            use_time_rule=True,
+            max_time_minutes=2880.0,  # 48h required normally
+            keep_top_seeded_enabled=True,
+            keep_top_seeded_count=1,
+            keep_alive_hours=72.0,
+        )
+
+        # Transfer 10 was already COMPLETED on first scan (cached by another user)
+        t_cached = {
+            "id": 10,
+            "name": "Instant.Cached.Release",
+            "status": "COMPLETED",
+            "up_speed": 999999,
+            "uploaded": 9999999,
+            "size": 5000000,
+            "seconds_seeding": 0,
+            "current_ratio": 0.0,
+        }
+        # Transfer 11 started as DOWNLOADING on first scan and is now SEEDING
+        t_seeding = {
+            "id": 11,
+            "name": "Normal.Seeder.Release",
+            "status": "SEEDING",
+            "up_speed": 1000,
+            "uploaded": 5000,
+            "size": 5000000,
+            "seconds_seeding": 60,
+            "current_ratio": 0.1,
+        }
+
+        first_seen = {10: "COMPLETED", 11: "DOWNLOADING"}
+        protections = compute_keep_alive_protections(
+            [t_cached, t_seeding], rule, first_seen
+        )
+        # Cached COMPLETED transfer must not steal Top Seeded #1 slot
+        self.assertNotIn(10, protections)
+        self.assertEqual(protections[11], "Top Seeded #1")
+
+        # Cached COMPLETED transfer is canceled immediately despite 48h rule & keep-alive
+        ev_cached = evaluate_transfer_against_rule(
+            t_cached,
+            rule,
+            protections.get(10),
+            was_completed_on_first_scan=(first_seen[10] == "COMPLETED"),
+        )
+        self.assertTrue(ev_cached["should_cancel"])
+        self.assertIn("Already COMPLETED on first scan", ev_cached["reason"])
+
+        # Normal transfer that started as DOWNLOADING is NOT canceled on first scan rule
+        ev_seeding = evaluate_transfer_against_rule(
+            t_seeding,
+            rule,
+            protections.get(11),
+            was_completed_on_first_scan=(first_seen[11] == "COMPLETED"),
+        )
+        self.assertFalse(ev_seeding["should_cancel"])
+
+
 
 class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
     async def test_auto_discovery_and_cancellation(self) -> None:

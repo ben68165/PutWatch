@@ -177,7 +177,19 @@
             Trackers are automatically extracted from active transfers (`tracker` announce URL &amp; magnet `tr=` sources). Click any tracker badge to configure its cancellation rule.
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2.5">
+          <label
+            title="Blur transfer names for privacy"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs font-medium text-slate-300 cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              id="chk-hide-transfer-names"
+              onchange="toggleTransferNamesPrivacy(this.checked)"
+              class="w-3.5 h-3.5 accent-amber-500 cursor-pointer"
+            />
+            <span>Hide Transfer Names</span>
+          </label>
           <input
             type="text"
             id="transfer-search"
@@ -458,7 +470,7 @@
 
         <!-- Friendly Name -->
         <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">Display Label (optional)</label>
+          <label class="block text-xs font-medium text-slate-300 mb-1">Display Label Name (shown across all tabs)</label>
           <input
             type="text"
             id="modal-display-name"
@@ -474,6 +486,15 @@
             <div class="text-xs text-emerald-200/70">Automatically cancel &amp; remove transfers matching this tracker's thresholds</div>
           </div>
           <input type="checkbox" id="modal-enabled" class="w-5 h-5 accent-emerald-500" />
+        </label>
+
+        <!-- Cancel Instant / Already COMPLETED Transfers on First Scan -->
+        <label class="flex items-center justify-between p-3.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 cursor-pointer">
+          <div>
+            <div class="text-sm font-semibold text-indigo-300">Cancel Transfers Showing as COMPLETED on First Scan</div>
+            <div class="text-xs text-indigo-200/70">Immediately cancel &amp; remove transfers that finish instantly (already cached on Put.io) without needing to meet seed time or ratio</div>
+          </div>
+          <input type="checkbox" id="modal-cancel-completed-first-scan" onchange="updateModalConditionUI()" class="w-4 h-4 accent-indigo-500" />
         </label>
 
         <!-- Cancel Immediately When Downloaded -->

@@ -21,6 +21,24 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+function getTrackerDisplayName(trackerId) {
+  if (!trackerId) return 'Untracked';
+  if (trackerId === '__default__') {
+    return (
+      (appState.default_rule && appState.default_rule.display_name) ||
+      'Default Fallback Rule (Unmatched Trackers)'
+    );
+  }
+  const found = (appState.trackers || []).find((r) => r.tracker_id === trackerId);
+  if (found && found.display_name && String(found.display_name).trim()) {
+    return String(found.display_name).trim();
+  }
+  if (trackerId === 'untracked') {
+    return 'Direct / DHT (No Tracker)';
+  }
+  return String(trackerId);
+}
+
 function formatBytes(bytes) {
   const num = Number(bytes) || 0;
   if (num <= 0) return '0 B';
@@ -149,6 +167,21 @@ async function scanNow() {
   }
 }
 
+async function toggleTransferNamesPrivacy(checked) {
+  if (!appState.settings) appState.settings = {};
+  appState.settings.hide_transfer_names = Boolean(checked);
+  renderTransfers();
+  try {
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hide_transfer_names: Boolean(checked) }),
+    });
+  } catch (_err) {
+    // ignore transient error
+  }
+}
+
 function updateUI(state) {
   appState = state;
   const s = state.settings || {};
@@ -157,6 +190,12 @@ function updateUI(state) {
   const trackers = state.trackers || [];
   const logs = state.activity_log || [];
   const tz = s.timezone || 'Europe/Berlin';
+
+  // Sync privacy checkbox
+  const hideNamesChk = document.getElementById('chk-hide-transfer-names');
+  if (hideNamesChk) {
+    hideNamesChk.checked = Boolean(s.hide_transfer_names);
+  }
 
   // Badges
   document.getElementById('badge-transfers-count').textContent = transfers.length;
@@ -188,7 +227,7 @@ function updateUI(state) {
     dryRunBadge.classList.add('hidden');
   }
 
-  // Header labels
+  // Header labels (token is 100% anonymized)
   document.getElementById('last-poll-label').textContent = m.last_poll_at
     ? `Last scan: ${formatDateTime(m.last_poll_at)}`
     : 'Last scan: Pending';
@@ -196,7 +235,7 @@ function updateUI(state) {
   if (m.account_info && m.account_info.username) {
     document.getElementById('account-label').textContent = `Put.io: @${m.account_info.username}`;
   } else if (s.has_token) {
-    document.getElementById('account-label').textContent = `Token: ${s.masked_token}`;
+    document.getElementById('account-label').textContent = 'Token: ••••••••••••••••';
   } else {
     document.getElementById('account-label').textContent = 'No token configured';
   }
@@ -248,11 +287,14 @@ function getStatusBadgeHtml(status) {
 function renderTransfers() {
   const container = document.getElementById('transfers-list');
   const filter = (document.getElementById('transfer-search')?.value || '').trim().toLowerCase();
+  const hideNames = Boolean(appState.settings?.hide_transfer_names);
+
   const transfers = (appState.transfers || []).filter((t) => {
     if (!filter) return true;
     const nameMatch = String(t.name || '').toLowerCase().includes(filter);
-    const trackerMatch = String(t.primary_tracker || '').toLowerCase().includes(filter);
-    return nameMatch || trackerMatch;
+    const trackerIdMatch = String(t.primary_tracker || '').toLowerCase().includes(filter);
+    const trackerLabelMatch = getTrackerDisplayName(t.primary_tracker).toLowerCase().includes(filter);
+    return nameMatch || trackerIdMatch || trackerLabelMatch;
   });
 
   if (!appState.settings?.has_token) {
@@ -288,24 +330,26 @@ function renderTransfers() {
       const upSpeed = Number(t.up_speed || 0);
       const downSpeed = Number(t.down_speed || 0);
       const trackersList = t.trackers_list || [{ tracker_id: t.primary_tracker || 'untracked' }];
+      const primaryTrackerLabel = getTrackerDisplayName(t.primary_tracker);
 
       const trackerBadges = trackersList
         .map((tr) => {
           const trId = tr.tracker_id;
+          const trLabel = getTrackerDisplayName(trId);
           const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
           const isEnabled = configuredRule && configuredRule.enabled;
           return `
             <button
               onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
-              title="Click to configure rule for ${escapeHtml(trId)}"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono border transition cursor-pointer ${
+              title="Click to configure rule for ${escapeHtml(trLabel)}"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
                 isEnabled
                   ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
                   : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
               }"
             >
               <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
-              <span>${escapeHtml(trId)}</span>
+              <span>${escapeHtml(trLabel)}</span>
               <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
             </button>`;
         })
@@ -384,12 +428,15 @@ function renderTransfers() {
       } else {
         ruleProgressHtml = `
           <div class="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
-            <span>No active auto-cancel rule for <code class="text-slate-300">${escapeHtml(t.primary_tracker)}</code></span>
+            <span>No active auto-cancel rule for <strong class="text-slate-300">${escapeHtml(primaryTrackerLabel)}</strong></span>
             <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer">
-              + Set Rule for ${escapeHtml(t.primary_tracker)}
+              + Set Rule for ${escapeHtml(primaryTrackerLabel)}
             </button>
           </div>`;
       }
+
+      const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
+      const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(t.name)}"`;
 
       return `
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700/80 transition">
@@ -397,7 +444,7 @@ function renderTransfers() {
             <div class="space-y-1.5 min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 ${getStatusBadgeHtml(t.status)}
-                <h3 class="font-semibold text-sm sm:text-base text-white truncate" title="${escapeHtml(t.name)}">
+                <h3 class="font-semibold text-sm sm:text-base text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
                   ${escapeHtml(t.name)}
                 </h3>
               </div>
@@ -447,6 +494,10 @@ function renderTrackerCardHtml(r, isDefault = false) {
     ? 'Immediate on Download Complete'
     : `${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Total Age' : 'Seeding Time'})`;
 
+  const displayLabel = isDefault
+    ? 'Default Fallback Rule (Unmatched Trackers)'
+    : getTrackerDisplayName(r.tracker_id);
+
   const keepParts = [];
   if (r.keep_top_seeded_enabled) {
     keepParts.push(`Top ${r.keep_top_seeded_count} Seeded`);
@@ -464,8 +515,8 @@ function renderTrackerCardHtml(r, isDefault = false) {
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-mono font-bold text-sm sm:text-base text-white truncate">
-                ${escapeHtml(isDefault ? 'Default Fallback Rule (Unmatched Trackers)' : r.tracker_id)}
+              <span class="font-bold text-sm sm:text-base text-white truncate">
+                ${escapeHtml(displayLabel)}
               </span>
               ${
                 !isDefault && r.discovered_from_transfers
@@ -478,19 +529,22 @@ function renderTrackerCardHtml(r, isDefault = false) {
                   : ''
               }
               ${
+                r.cancel_completed_on_first_scan
+                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">Instant Completed Cancel</span>'
+                  : ''
+              }
+              ${
                 r.cancel_on_completed
                   ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">Cancel on Complete</span>'
                   : ''
               }
             </div>
             ${
-              r.sample_announce_url
+              isDefault
+                ? '<p class="text-xs text-slate-400 mt-0.5">Applies to any transfer whose tracker does not have its own specific rule enabled.</p>'
+                : r.sample_announce_url
                 ? `<p class="text-[11px] text-slate-500 font-mono truncate mt-0.5" title="${escapeHtml(r.sample_announce_url)}">${escapeHtml(r.sample_announce_url)}</p>`
-                : `<p class="text-xs text-slate-400 mt-0.5">${
-                    isDefault
-                      ? 'Applies to any transfer whose tracker does not have its own specific rule enabled.'
-                      : escapeHtml(r.display_name || '')
-                  }</p>`
+                : ''
             }
           </div>
 
@@ -649,6 +703,7 @@ function renderLogs() {
   tbody.innerHTML = logs
     .map((entry) => {
       const timeFormatted = formatDateTime(entry.timestamp);
+      const trackerDisplay = getTrackerDisplayName(entry.tracker_id);
       return `
         <tr class="hover:bg-slate-800/40">
           <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
@@ -656,7 +711,7 @@ function renderLogs() {
             ${escapeHtml(entry.transfer_name)}
             <div class="text-[11px] text-slate-500 font-mono">ID: ${entry.transfer_id} &bull; ${escapeHtml(entry.status_at_cancel)}</div>
           </td>
-          <td class="py-3 px-4 font-mono text-xs text-amber-300">${escapeHtml(entry.tracker_id)}</td>
+          <td class="py-3 px-4 font-semibold text-xs text-amber-300">${escapeHtml(trackerDisplay)}</td>
           <td class="py-3 px-4 text-xs text-slate-300 whitespace-nowrap">
             <div>Seeded: <span class="font-mono text-white">${formatDuration(entry.seeding_seconds)}</span></div>
             <div>Ratio: <span class="font-mono text-emerald-400">${Number(entry.ratio_at_cancel || 0).toFixed(2)}</span></div>
@@ -701,10 +756,10 @@ function renderSettingsForm() {
   if (m.account_info && m.account_info.username) {
     statusEl.className = 'font-semibold text-emerald-400';
     statusEl.textContent = `Connected as @${m.account_info.username}`;
-    detailEl.textContent = `Account Email: ${m.account_info.mail || 'N/A'} | Token: ${s.masked_token}`;
+    detailEl.textContent = `Account Email: ${m.account_info.mail || 'N/A'} | Token: ••••••••••••••••`;
   } else if (s.has_token) {
     statusEl.className = 'font-semibold text-amber-300';
-    statusEl.textContent = `Token Saved (${s.masked_token})`;
+    statusEl.textContent = 'Token Saved (••••••••••••••••)';
     detailEl.textContent = m.last_error || 'Ready to poll Put.io API.';
   } else {
     statusEl.className = 'font-semibold text-red-400';
@@ -728,6 +783,7 @@ function openRuleModal(trackerId) {
   const nameInput = document.getElementById('modal-display-name');
   const sampleUrlEl = document.getElementById('modal-sample-url');
   const enabledChk = document.getElementById('modal-enabled');
+  const cancelCompletedFirstScanChk = document.getElementById('modal-cancel-completed-first-scan');
   const cancelOnCompletedChk = document.getElementById('modal-cancel-on-completed');
   const useTimeChk = document.getElementById('modal-use-time');
   const hoursInput = document.getElementById('modal-time-hours');
@@ -752,13 +808,15 @@ function openRuleModal(trackerId) {
   }
 
   if (existing) {
+    const label = getTrackerDisplayName(existing.tracker_id);
     document.getElementById('modal-title').textContent =
-      trackerId === '__default__' ? 'Edit Default Fallback Rule' : `Configure Rule: ${existing.tracker_id}`;
+      trackerId === '__default__' ? 'Edit Default Fallback Rule' : `Configure Rule: ${label}`;
     idInput.value = existing.tracker_id;
     idInput.disabled = trackerId === '__default__';
     nameInput.value = existing.display_name || '';
     sampleUrlEl.textContent = existing.sample_announce_url ? `Sample Announce URL: ${existing.sample_announce_url}` : '';
     enabledChk.checked = Boolean(existing.enabled);
+    cancelCompletedFirstScanChk.checked = Boolean(existing.cancel_completed_on_first_scan);
     cancelOnCompletedChk.checked = Boolean(existing.cancel_on_completed);
     useTimeChk.checked = Boolean(existing.use_time_rule);
     const totalMins = Number(existing.max_time_minutes || 0);
@@ -786,13 +844,14 @@ function openRuleModal(trackerId) {
     });
   } else {
     document.getElementById('modal-title').textContent = trackerId
-      ? `Configure Rule: ${trackerId}`
+      ? `Configure Rule: ${getTrackerDisplayName(trackerId)}`
       : 'Add Custom Tracker Rule';
     idInput.value = trackerId || '';
     idInput.disabled = false;
     nameInput.value = '';
     sampleUrlEl.textContent = '';
     enabledChk.checked = true;
+    cancelCompletedFirstScanChk.checked = false;
     cancelOnCompletedChk.checked = false;
     useTimeChk.checked = true;
     hoursInput.value = 2;
@@ -850,13 +909,22 @@ async function saveModalRule() {
   }
 
   const enabled = document.getElementById('modal-enabled').checked;
+  const cancelCompletedFirstScan = document.getElementById('modal-cancel-completed-first-scan').checked;
   const cancelOnCompleted = document.getElementById('modal-cancel-on-completed').checked;
   const useTime = document.getElementById('modal-use-time').checked;
   const useRatio = document.getElementById('modal-use-ratio').checked;
   const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
   const keepLargest = document.getElementById('modal-keep-largest').checked;
 
-  if (enabled && !cancelOnCompleted && !useTime && !useRatio && !keepTopSeeded && !keepLargest) {
+  if (
+    enabled &&
+    !cancelCompletedFirstScan &&
+    !cancelOnCompleted &&
+    !useTime &&
+    !useRatio &&
+    !keepTopSeeded &&
+    !keepLargest
+  ) {
     showToast('Please enable at least one rule condition.', 'error');
     return;
   }
@@ -874,10 +942,12 @@ async function saveModalRule() {
     if (r.checked) operator = r.value;
   });
 
+  const displayNameVal = document.getElementById('modal-display-name').value.trim();
   const payload = {
     tracker_id: trackerId,
-    display_name: document.getElementById('modal-display-name').value.trim(),
+    display_name: displayNameVal,
     enabled,
+    cancel_completed_on_first_scan: cancelCompletedFirstScan,
     cancel_on_completed: cancelOnCompleted,
     use_time_rule: useTime,
     max_time_minutes: maxTimeMinutes,
@@ -904,7 +974,7 @@ async function saveModalRule() {
     if (!resp.ok) throw new Error(data.detail || 'Failed to save rule');
     updateUI(data);
     closeRuleModal();
-    showToast(`Saved rule for ${trackerId}`, 'success');
+    showToast(`Saved rule for ${displayNameVal || getTrackerDisplayName(trackerId)}`, 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -922,8 +992,14 @@ async function quickToggleRule(trackerId) {
     tracker_id: existing.tracker_id,
     display_name: existing.display_name,
     enabled: newEnabled,
+    cancel_completed_on_first_scan: Boolean(existing.cancel_completed_on_first_scan),
     cancel_on_completed: Boolean(existing.cancel_on_completed),
-    use_time_rule: existing.use_time_rule || (!existing.use_ratio_rule && !existing.cancel_on_completed && newEnabled),
+    use_time_rule:
+      existing.use_time_rule ||
+      (!existing.use_ratio_rule &&
+        !existing.cancel_on_completed &&
+        !existing.cancel_completed_on_first_scan &&
+        newEnabled),
     max_time_minutes: existing.max_time_minutes,
     time_metric: existing.time_metric || 'seeding_time',
     use_ratio_rule: existing.use_ratio_rule,
@@ -947,14 +1023,15 @@ async function quickToggleRule(trackerId) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'Failed to toggle rule');
     updateUI(data);
-    showToast(`${existing.tracker_id}: Rule ${newEnabled ? 'enabled' : 'disabled'}`, 'info');
+    showToast(`${getTrackerDisplayName(existing.tracker_id)}: Rule ${newEnabled ? 'enabled' : 'disabled'}`, 'info');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
 async function deleteTrackerRule(trackerId) {
-  if (!confirm(`Remove tracker '${trackerId}' and its rule from configuration?`)) return;
+  const label = getTrackerDisplayName(trackerId);
+  if (!confirm(`Remove tracker '${label}' and its rule from configuration?`)) return;
   try {
     const resp = await fetch(`/api/trackers/${encodeURIComponent(trackerId)}`, {
       method: 'DELETE',
@@ -962,7 +1039,7 @@ async function deleteTrackerRule(trackerId) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'Delete failed');
     updateUI(data);
-    showToast(`Deleted tracker ${trackerId}`, 'info');
+    showToast(`Deleted tracker ${label}`, 'info');
   } catch (err) {
     showToast(err.message, 'error');
   }

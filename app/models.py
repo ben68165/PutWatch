@@ -24,11 +24,16 @@ class TrackerRule(BaseModel):
     )
     display_name: str = Field(
         default="",
-        description="Optional friendly display name for the tracker.",
+        description="Friendly display label for the tracker shown across all tabs.",
     )
     enabled: bool = Field(
         default=False,
         description="Whether automatic cancellation is active for this tracker.",
+    )
+    # Option to cancel transfers that show up as COMPLETED on first scan (instant/cached transfers)
+    cancel_completed_on_first_scan: bool = Field(
+        default=False,
+        description="If True, transfers that already have status COMPLETED when first scanned (instant/cached transfers) are canceled and removed immediately without needing to meet seed time or ratio.",
     )
     # Option to cancel immediately once download to Put.io is finished
     cancel_on_completed: bool = Field(
@@ -164,11 +169,16 @@ class AppConfig(BaseModel):
         default=True,
         description="After canceling a seeding transfer, also remove/clean its entry from the Put.io transfer list (files in storage are kept).",
     )
+    hide_transfer_names: bool = Field(
+        default=False,
+        description="If True, blurs transfer names in the Active Transfers tab for privacy.",
+    )
     default_rule: TrackerRule = Field(
         default_factory=lambda: TrackerRule(
             tracker_id="__default__",
             display_name="Default / Fallback Rule (Unconfigured Trackers)",
             enabled=False,
+            cancel_completed_on_first_scan=False,
             cancel_on_completed=False,
             use_time_rule=True,
             max_time_minutes=240.0,
@@ -197,12 +207,14 @@ class SettingsUpdateRequest(BaseModel):
     dry_run: Optional[bool] = None
     auto_discover_trackers: Optional[bool] = None
     clean_completed_after_cancel: Optional[bool] = None
+    hide_transfer_names: Optional[bool] = None
 
 
 class TrackerRuleUpdateRequest(BaseModel):
     tracker_id: str
     display_name: Optional[str] = None
     enabled: bool = False
+    cancel_completed_on_first_scan: bool = False
     cancel_on_completed: bool = False
     use_time_rule: bool = True
     max_time_minutes: float = Field(default=120.0, ge=0.0)

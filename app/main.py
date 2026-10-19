@@ -57,9 +57,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def _mask_token(token: str) -> str:
     if not token:
         return ""
-    if len(token) <= 8:
-        return "*" * len(token)
-    return f"{token[:4]}...{token[-4:]}"
+    return "•" * 16
 
 
 def _configured_timezone() -> str:
@@ -97,7 +95,7 @@ async def get_state() -> Dict[str, Any]:
         key=lambda r: (
             not r.enabled,
             -r.matched_transfers_count,
-            r.tracker_id.lower(),
+            (r.display_name or r.tracker_id).lower(),
         ),
     )
 
@@ -116,6 +114,7 @@ async def get_state() -> Dict[str, Any]:
             "dry_run": cfg.dry_run,
             "auto_discover_trackers": cfg.auto_discover_trackers,
             "clean_completed_after_cancel": cfg.clean_completed_after_cancel,
+            "hide_transfer_names": cfg.hide_transfer_names,
             "timezone": _configured_timezone(),
         },
         "monitor": {
@@ -171,7 +170,7 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
 
     if req.putio_token is not None:
         cleaned_token = req.putio_token.strip()
-        if "..." not in cleaned_token:
+        if "..." not in cleaned_token and "•" not in cleaned_token:
             if cleaned_token != cfg.putio_token:
                 cfg.putio_token = cleaned_token
                 token_changed = True
@@ -188,6 +187,8 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
         cfg.auto_discover_trackers = req.auto_discover_trackers
     if req.clean_completed_after_cancel is not None:
         cfg.clean_completed_after_cancel = req.clean_completed_after_cancel
+    if req.hide_transfer_names is not None:
+        cfg.hide_transfer_names = req.hide_transfer_names
 
     store.save(cfg)
 
@@ -304,6 +305,7 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
 
     if (
         req.enabled
+        and not req.cancel_completed_on_first_scan
         and not req.cancel_on_completed
         and not req.use_time_rule
         and not req.use_ratio_rule
@@ -312,7 +314,7 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
     ):
         raise HTTPException(
             status_code=400,
-            detail="An enabled rule must have at least one condition active (Cancel on Download, Time Rule, Ratio Rule, or Keep-Alive Rule).",
+            detail="An enabled rule must have at least one condition active.",
         )
 
     cfg = store.get()
@@ -331,6 +333,7 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
             else (existing.display_name if existing and existing.display_name else normalized_id)
         ),
         enabled=req.enabled,
+        cancel_completed_on_first_scan=req.cancel_completed_on_first_scan,
         cancel_on_completed=req.cancel_on_completed,
         use_time_rule=req.use_time_rule,
         max_time_minutes=req.max_time_minutes,

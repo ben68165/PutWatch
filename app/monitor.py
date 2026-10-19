@@ -66,7 +66,10 @@ def describe_rule(rule: TrackerRule) -> str:
             parts.append(f"Ratio >= {rule.max_ratio:.2f}")
 
     joiner = f" {rule.condition_operator} "
-    base_str = joiner.join(parts) if parts else "Keep-Alive Only"
+    base_str = joiner.join(parts) if parts else "Active Rule"
+
+    if rule.cancel_completed_on_first_scan and not rule.cancel_on_completed:
+        base_str += " + Instant COMPLETED"
 
     keep_parts: List[str] = []
     if rule.keep_top_seeded_enabled:
@@ -118,13 +121,14 @@ def find_matching_rule(
 def compute_keep_alive_protections(
     transfers_for_rule: List[Dict[str, Any]],
     rule: TrackerRule,
+    first_seen_status_map: Optional[Dict[int, str]] = None,
 ) -> Dict[int, str]:
     """
     For all active SEEDING/COMPLETED transfers matched to `rule`, determines which transfer IDs
     qualify for extended keep-alive protection:
       1. Top N Seeded transfers (`keep_top_seeded_enabled`, `keep_top_seeded_count`, `top_seeded_metric`)
       2. Additionally, Top M Largest transfers (`keep_largest_enabled`, `keep_largest_count`)
-    Returns a map of {transfer_id: protection_label} (e.g. {101: 'Top Seeded #1', 102: 'Largest Size #1'}).
+    Returns a map of {transfer_id: protection_label}.
     """
     protections: Dict[int, str] = {}
     if not rule or not rule.enabled:
@@ -132,11 +136,21 @@ def compute_keep_alive_protections(
     if not rule.keep_top_seeded_enabled and not rule.keep_largest_enabled:
         return protections
 
-    seeding_pool = [
-        t
-        for t in transfers_for_rule
-        if str(t.get("status") or "").upper() in ("SEEDING", "COMPLETED", "COMPLETING")
-    ]
+    seeding_pool: List[Dict[str, Any]] = []
+    for t in transfers_for_rule:
+        tid = int(t.get("id") or 0)
+        st = str(t.get("status") or "").upper()
+        if st not in ("SEEDING", "COMPLETED", "COMPLETING"):
+            continue
+        # If cancel_completed_on_first_scan is active and this transfer was already COMPLETED on first scan,
+        # do not protect it so it can be canceled immediately.
+        first_st = (
+            first_seen_status_map.get(tid, st) if first_seen_status_map else st
+        )
+        if rule.cancel_completed_on_first_scan and st == "COMPLETED" and first_st == "COMPLETED":
+            continue
+        seeding_pool.append(t)
+
     if not seeding_pool:
         return protections
 
@@ -154,7 +168,6 @@ def compute_keep_alive_protections(
                 return (uploaded, up_spd, ratio, size, -tid)
             if metric == "ratio":
                 return (ratio, uploaded, up_spd, size, -tid)
-            # default 'up_speed': current upload speed, then total uploaded bytes, then ratio
             return (up_spd, uploaded, ratio, size, -tid)
 
         sorted_by_seed = sorted(seeding_pool, key=_seed_sort_key, reverse=True)
@@ -190,9 +203,11 @@ def evaluate_transfer_against_rule(
     transfer: Dict[str, Any],
     rule: Optional[TrackerRule],
     protection_label: Optional[str] = None,
+    was_completed_on_first_scan: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate a single Put.io transfer dict against a TrackerRule, factoring in:
+      - Immediate cancellation if already COMPLETED on first scan (`cancel_completed_on_first_scan`)
       - Immediate cancellation upon download completion (`cancel_on_completed`)
       - Time threshold (`use_time_rule`, `max_time_minutes`)
       - Ratio threshold (`use_ratio_rule`, `max_ratio`)
@@ -202,6 +217,9 @@ def evaluate_transfer_against_rule(
     status = str(transfer.get("status") or "UNKNOWN").upper()
     seeding_seconds = int(transfer.get("seconds_seeding") or 0)
     current_ratio = float(transfer.get("current_ratio") or 0.0)
+
+    if was_completed_on_first_scan is None:
+        was_completed_on_first_scan = status == "COMPLETED"
 
     created_dt = _parse_putio_datetime(transfer.get("created_at"))
     now_dt = datetime.now(timezone.utc)
@@ -226,6 +244,35 @@ def evaluate_transfer_against_rule(
             "remaining_seconds": None,
             "evaluated_seconds": seeding_seconds,
             "target_seconds": None,
+            "target_ratio": None,
+        }
+
+    # Check if this transfer was already COMPLETED when first scanned (instant/cached transfer on Put.io)
+    if (
+        rule.cancel_completed_on_first_scan
+        and status == "COMPLETED"
+        and was_completed_on_first_scan
+    ):
+        return {
+            "rule_enabled": True,
+            "rule_id": rule.tracker_id,
+            "rule_summary": describe_rule(rule),
+            "condition_operator": rule.condition_operator,
+            "cancel_on_completed": rule.cancel_on_completed,
+            "cancel_completed_on_first_scan": True,
+            "use_time_rule": True,
+            "use_ratio_rule": False,
+            "eligible_status": True,
+            "should_cancel": True,
+            "reason": "Already COMPLETED on first scan (instant/cached transfer on Put.io)",
+            "protection_label": None,
+            "protection_active": False,
+            "keep_alive_target_seconds": None,
+            "time_progress_pct": 100.0,
+            "ratio_progress_pct": 100.0,
+            "remaining_seconds": 0,
+            "evaluated_seconds": seeding_seconds,
+            "target_seconds": 0,
             "target_ratio": None,
         }
 
@@ -314,7 +361,6 @@ def evaluate_transfer_against_rule(
 
     if protection_label and seeding_or_done:
         if seeding_seconds < keep_alive_target_seconds:
-            # Protected! Keep transfer alive until keep_alive_target_seconds
             protection_active = True
             should_cancel = False
             reasons = []
@@ -330,7 +376,6 @@ def evaluate_transfer_against_rule(
             )
             remaining_seconds = max(0, int(keep_alive_target_seconds - seeding_seconds))
         else:
-            # Keep-alive duration has been reached!
             should_cancel = True
             reasons.append(
                 f"{protection_label} keep-alive limit reached ({format_duration(seeding_seconds)} >= {format_duration(keep_alive_target_seconds)})"
@@ -346,6 +391,7 @@ def evaluate_transfer_against_rule(
         "rule_summary": describe_rule(rule),
         "condition_operator": rule.condition_operator,
         "cancel_on_completed": rule.cancel_on_completed,
+        "cancel_completed_on_first_scan": rule.cancel_completed_on_first_scan,
         "use_time_rule": effective_use_time,
         "use_ratio_rule": rule.use_ratio_rule,
         "eligible_status": eligible_status,
@@ -381,6 +427,7 @@ class TransferMonitorService:
         self.last_error: Optional[str] = None
         self.account_info: Optional[Dict[str, Any]] = None
         self.cached_transfers: List[Dict[str, Any]] = []
+        self.first_seen_status: Dict[int, str] = {}
         self.is_polling: bool = False
 
     def start(self) -> None:
@@ -447,7 +494,6 @@ class TransferMonitorService:
 
                 client = PutioClient(token=cfg.putio_token)
 
-                # If PutWatch OAuth App ID is not registered yet, automatically register "PutWatch"
                 if not cfg.putio_app_id:
                     app_reg = await client.ensure_putwatch_oauth_app()
                     if app_reg and app_reg.get("app_id"):
@@ -468,6 +514,22 @@ class TransferMonitorService:
                 now_iso = _utc_now_iso()
                 self.last_poll_at = now_iso
                 self.last_error = None
+
+                # Record first-seen status for each transfer ID
+                current_ids = set()
+                for t in raw_transfers:
+                    tid = int(t.get("id") or 0)
+                    if tid:
+                        current_ids.add(tid)
+                        if tid not in self.first_seen_status:
+                            self.first_seen_status[tid] = str(
+                                t.get("status") or "UNKNOWN"
+                            ).upper()
+
+                # Prune first_seen_status for transfers no longer in Put.io list
+                for old_tid in list(self.first_seen_status.keys()):
+                    if old_tid not in current_ids:
+                        del self.first_seen_status[old_tid]
 
                 newly_discovered: List[str] = []
                 config_modified = False
@@ -544,7 +606,9 @@ class TransferMonitorService:
                 protections_by_transfer_id: Dict[int, str] = {}
                 for rid, rule_transfers in transfers_by_rule_id.items():
                     rule_protections = compute_keep_alive_protections(
-                        rule_transfers, rules_by_id[rid]
+                        rule_transfers,
+                        rules_by_id[rid],
+                        first_seen_status_map=self.first_seen_status,
                     )
                     protections_by_transfer_id.update(rule_protections)
 
@@ -564,8 +628,15 @@ class TransferMonitorService:
                         tid, ("untracked", None)
                     )
                     protection_label = protections_by_transfer_id.get(tid)
+                    was_completed_first = (
+                        t_status == "COMPLETED"
+                        and self.first_seen_status.get(tid, t_status) == "COMPLETED"
+                    )
                     evaluation = evaluate_transfer_against_rule(
-                        t, matched_rule, protection_label=protection_label
+                        t,
+                        matched_rule,
+                        protection_label=protection_label,
+                        was_completed_on_first_scan=was_completed_first,
                     )
 
                     enriched = {
