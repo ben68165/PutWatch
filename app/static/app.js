@@ -765,9 +765,47 @@ function renderSingleTransferCardHtml(t, hideNames) {
     </div>`;
 }
 
+function clearTransferSearch() {
+  const input = document.getElementById('transfer-search');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderTransfers();
+}
+
+function clearLogSearch() {
+  const input = document.getElementById('log-search');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderLogs();
+}
+
+function clearTrackerSearch() {
+  const input = document.getElementById('tracker-search');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  renderTrackers();
+}
+
 function renderTransfers() {
   const container = document.getElementById('transfers-list');
-  const filter = (document.getElementById('transfer-search')?.value || '').trim().toLowerCase();
+  const transferSearchInput = document.getElementById('transfer-search');
+  const clearTransferBtn = document.getElementById('btn-clear-transfer-search');
+  const rawSearchVal = transferSearchInput?.value || '';
+  if (clearTransferBtn) {
+    if (rawSearchVal.length > 0) {
+      clearTransferBtn.classList.remove('hidden');
+    } else {
+      clearTransferBtn.classList.add('hidden');
+    }
+  }
+
+  const filter = rawSearchVal.trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
   updateTransferGroupButtonsUI();
 
@@ -1171,7 +1209,18 @@ function renderTrackers() {
   }
 
   const listEl = document.getElementById('trackers-list');
-  const query = (document.getElementById('tracker-search')?.value || '').trim().toLowerCase();
+  const trackerSearchInput = document.getElementById('tracker-search');
+  const clearTrackerBtn = document.getElementById('btn-clear-tracker-search');
+  const rawTrackerQuery = trackerSearchInput?.value || '';
+  if (clearTrackerBtn) {
+    if (rawTrackerQuery.length > 0) {
+      clearTrackerBtn.classList.remove('hidden');
+    } else {
+      clearTrackerBtn.classList.add('hidden');
+    }
+  }
+
+  const query = rawTrackerQuery.trim().toLowerCase();
   const trackers = (appState.trackers || []).filter((r) => {
     if (!query) return true;
     return (
@@ -1206,7 +1255,18 @@ function renderTrackers() {
 function renderLogs() {
   const tbody = document.getElementById('logs-table-body');
   const allLogs = appState.activity_log || [];
-  const filter = (document.getElementById('log-search')?.value || '').trim().toLowerCase();
+  const logSearchInput = document.getElementById('log-search');
+  const clearLogBtn = document.getElementById('btn-clear-log-search');
+  const rawLogSearch = logSearchInput?.value || '';
+  if (clearLogBtn) {
+    if (rawLogSearch.length > 0) {
+      clearLogBtn.classList.remove('hidden');
+    } else {
+      clearLogBtn.classList.add('hidden');
+    }
+  }
+
+  const filter = rawLogSearch.trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
 
   const logs = allLogs.filter((entry) => {
