@@ -169,15 +169,25 @@ async function scanNow() {
   }
 }
 
+function syncPrivacyTogglesUI(isHidden) {
+  const chkTransfers = document.getElementById('chk-hide-transfer-names');
+  const chkLogs = document.getElementById('chk-hide-transfer-names-logs');
+  if (chkTransfers) chkTransfers.checked = Boolean(isHidden);
+  if (chkLogs) chkLogs.checked = Boolean(isHidden);
+}
+
 async function toggleTransferNamesPrivacy(checked) {
+  const hideVal = Boolean(checked);
   if (!appState.settings) appState.settings = {};
-  appState.settings.hide_transfer_names = Boolean(checked);
+  appState.settings.hide_transfer_names = hideVal;
+  syncPrivacyTogglesUI(hideVal);
   renderTransfers();
+  renderLogs();
   try {
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hide_transfer_names: Boolean(checked) }),
+      body: JSON.stringify({ hide_transfer_names: hideVal }),
     });
   } catch (_err) {
     // ignore transient error
@@ -193,11 +203,8 @@ function updateUI(state) {
   const logs = state.activity_log || [];
   const tz = s.timezone || 'Europe/Berlin';
 
-  // Sync privacy checkbox
-  const hideNamesChk = document.getElementById('chk-hide-transfer-names');
-  if (hideNamesChk) {
-    hideNamesChk.checked = Boolean(s.hide_transfer_names);
-  }
+  // Sync privacy toggle switches across Active Transfers and Cancellation Log tabs
+  syncPrivacyTogglesUI(Boolean(s.hide_transfer_names));
 
   // Badges
   document.getElementById('badge-transfers-count').textContent = transfers.length;
@@ -893,6 +900,7 @@ function renderTrackers() {
 function renderLogs() {
   const tbody = document.getElementById('logs-table-body');
   const logs = appState.activity_log || [];
+  const hideNames = Boolean(appState.settings?.hide_transfer_names);
   if (logs.length === 0) {
     tbody.innerHTML = `
       <tr>
@@ -903,15 +911,20 @@ function renderLogs() {
     return;
   }
 
+  const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
+
   tbody.innerHTML = logs
     .map((entry) => {
       const timeFormatted = formatDateTime(entry.timestamp);
       const trackerDisplay = getTrackerDisplayName(entry.tracker_id);
+      const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(entry.transfer_name)}"`;
       return `
         <tr class="hover:bg-slate-800/40">
           <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
-          <td class="py-3 px-4 font-medium text-white max-w-xs truncate" title="${escapeHtml(entry.transfer_name)}">
-            ${escapeHtml(entry.transfer_name)}
+          <td class="py-3 px-4 max-w-xs">
+            <div class="font-medium text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
+              ${escapeHtml(entry.transfer_name)}
+            </div>
             <div class="text-[11px] text-slate-500 font-mono">ID: ${entry.transfer_id} &bull; ${escapeHtml(entry.status_at_cancel)}</div>
           </td>
           <td class="py-3 px-4 font-semibold text-xs text-amber-300">${escapeHtml(trackerDisplay)}</td>
@@ -1078,6 +1091,13 @@ function openRuleModal(trackerId) {
 
   updateModalConditionUI();
   modal.classList.remove('hidden');
+
+  // Always reset scroll position of the modal settings container to the top
+  const modalBody = document.getElementById('rule-modal-body');
+  if (modalBody) {
+    modalBody.scrollTop = 0;
+  }
+  modal.scrollTop = 0;
 }
 
 function closeRuleModal() {
@@ -1232,9 +1252,63 @@ async function quickToggleRule(trackerId) {
   }
 }
 
+let confirmModalResolver = null;
+
+function showConfirmModal({
+  title = 'Confirm Action',
+  messageHtml = '',
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  danger = true,
+} = {}) {
+  const modal = document.getElementById('confirm-modal');
+  const titleEl = document.getElementById('confirm-modal-title');
+  const msgEl = document.getElementById('confirm-modal-message');
+  const okBtn = document.getElementById('confirm-modal-ok-btn');
+  const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
+
+  if (!modal || !titleEl || !msgEl || !okBtn || !cancelBtn) {
+    return Promise.resolve(false);
+  }
+
+  titleEl.textContent = title;
+  msgEl.innerHTML = messageHtml;
+  okBtn.textContent = confirmText;
+  cancelBtn.textContent = cancelText;
+
+  okBtn.className = danger
+    ? 'px-4 py-2 rounded-lg bg-red-500 hover:bg-red-400 text-xs sm:text-sm font-semibold text-slate-950 cursor-pointer transition'
+    : 'px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-xs sm:text-sm font-semibold text-slate-950 cursor-pointer transition';
+
+  modal.classList.remove('hidden');
+
+  return new Promise((resolve) => {
+    confirmModalResolver = resolve;
+  });
+}
+
+function resolveConfirmModal(confirmed) {
+  const modal = document.getElementById('confirm-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+  if (confirmModalResolver) {
+    const fn = confirmModalResolver;
+    confirmModalResolver = null;
+    fn(Boolean(confirmed));
+  }
+}
+
 async function deleteTrackerRule(trackerId) {
   const label = getTrackerDisplayName(trackerId);
-  if (!confirm(`Remove tracker '${label}' and its rule from configuration?`)) return;
+  const confirmed = await showConfirmModal({
+    title: 'Delete Tracker Rule',
+    messageHtml: `<p>Remove tracker <strong class="text-white">${escapeHtml(label)}</strong> and its cancellation rule from your configuration?</p>`,
+    confirmText: 'Delete Tracker Rule',
+    cancelText: 'Cancel',
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     const resp = await fetch(`/api/trackers/${encodeURIComponent(trackerId)}`, {
       method: 'DELETE',
@@ -1249,7 +1323,18 @@ async function deleteTrackerRule(trackerId) {
 }
 
 async function manualCancelTransfer(transferId, transferName) {
-  if (!confirm(`Stop seeding and remove "${transferName}" from your Put.io transfer list? (Downloaded files in storage will be kept)`)) {
+  const hideNames = Boolean(appState.settings?.hide_transfer_names);
+  const blurCls = hideNames ? 'blur-[6px] select-none inline-block' : '';
+  const confirmed = await showConfirmModal({
+    title: 'Cancel & Remove Transfer',
+    messageHtml: `
+      <p>Stop seeding and remove <strong class="text-white ${blurCls}">${escapeHtml(transferName)}</strong> from your Put.io transfer list?</p>
+      <p class="text-xs text-slate-400">Downloaded files already stored in your Put.io account will be kept.</p>`,
+    confirmText: 'Cancel & Remove',
+    cancelText: 'Keep Transfer',
+    danger: true,
+  });
+  if (!confirmed) {
     return;
   }
   try {
@@ -1257,7 +1342,10 @@ async function manualCancelTransfer(transferId, transferName) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'Failed to cancel transfer');
     updateUI(data);
-    showToast(`Canceled and removed "${transferName}"`, 'success');
+    showToast(
+      hideNames ? 'Canceled and removed transfer' : `Canceled and removed "${transferName}"`,
+      'success'
+    );
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1372,7 +1460,14 @@ async function startOobAuth() {
 }
 
 async function clearLogs() {
-  if (!confirm('Clear all cancellation log history?')) return;
+  const confirmed = await showConfirmModal({
+    title: 'Clear Cancellation Log',
+    messageHtml: '<p>Are you sure you want to permanently clear all cancellation log history?</p>',
+    confirmText: 'Clear Log',
+    cancelText: 'Cancel',
+    danger: true,
+  });
+  if (!confirmed) return;
   try {
     const resp = await fetch('/api/logs', { method: 'DELETE' });
     const data = await resp.json();
@@ -1382,6 +1477,20 @@ async function clearLogs() {
     showToast(err.message, 'error');
   }
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const confirmModal = document.getElementById('confirm-modal');
+    if (confirmModal && !confirmModal.classList.contains('hidden')) {
+      resolveConfirmModal(false);
+      return;
+    }
+    const ruleModal = document.getElementById('rule-modal');
+    if (ruleModal && !ruleModal.classList.contains('hidden')) {
+      closeRuleModal();
+    }
+  }
+});
 
 // Initial load & auto-refresh UI state every 10 seconds
 document.addEventListener('DOMContentLoaded', () => {
