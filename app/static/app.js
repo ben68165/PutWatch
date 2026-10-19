@@ -213,7 +213,7 @@ function doesDeviceAllowPinnedTransfersHeader() {
 
 function updateTransfersStickyHeaderState() {
   const stickyHeader = document.getElementById('transfers-sticky-header');
-  if (!stickyHeader) return;
+  const logsStickyHeader = document.getElementById('logs-sticky-header');
 
   const userPinEnabled = appState.settings?.pin_transfers_header !== false;
   const deviceAllows = doesDeviceAllowPinnedTransfersHeader();
@@ -233,39 +233,52 @@ function updateTransfersStickyHeaderState() {
     }
   }
 
-  // Sync in-tab Pin button
-  const pinBtn = document.getElementById('btn-pin-transfers-header');
-  const pinLabel = document.getElementById('label-pin-transfers-header');
-  if (pinBtn && pinLabel) {
+  // Sync in-tab Pin buttons across both Active Transfers and Cancellation Log tabs
+  const pinControls = [
+    {
+      btn: document.getElementById('btn-pin-transfers-header'),
+      label: document.getElementById('label-pin-transfers-header'),
+    },
+    {
+      btn: document.getElementById('btn-pin-logs-header'),
+      label: document.getElementById('label-pin-logs-header'),
+    },
+  ];
+
+  pinControls.forEach(({ btn, label }) => {
+    if (!btn || !label) return;
     if (userPinEnabled && !deviceAllows) {
-      pinBtn.setAttribute('aria-pressed', 'false');
-      pinBtn.className =
-        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-900 border-amber-500/30 text-amber-300/80';
-      pinBtn.title =
+      btn.setAttribute('aria-pressed', 'false');
+      btn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-900 border-amber-500/30 text-amber-300/80 shrink-0';
+      btn.title =
         'Pinned header is enabled in options, but automatically overridden because device screen space is too small';
-      pinLabel.textContent = 'Auto-Unpinned (Screen Size)';
+      label.textContent = 'Auto-Unpinned (Screen Size)';
     } else if (userPinEnabled) {
-      pinBtn.setAttribute('aria-pressed', 'true');
-      pinBtn.className =
-        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm';
-      pinBtn.title = 'Header is pinned and compacts when scrolling down (click to unpin)';
-      pinLabel.textContent = 'Pinned';
+      btn.setAttribute('aria-pressed', 'true');
+      btn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm shrink-0';
+      btn.title = 'Header is pinned and compacts when scrolling down (click to unpin)';
+      label.textContent = 'Pinned';
     } else {
-      pinBtn.setAttribute('aria-pressed', 'false');
-      pinBtn.className =
-        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white';
-      pinBtn.title = 'Click to pin this toolbar to the top when scrolling down';
-      pinLabel.textContent = 'Pin Header';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white shrink-0';
+      btn.title = 'Click to pin this toolbar to the top when scrolling down';
+      label.textContent = 'Pin Header';
     }
-  }
+  });
 
   const mainHeader = document.getElementById('main-app-header');
   const mainHeaderHeight = mainHeader ? mainHeader.offsetHeight : 112;
 
   if (effectivePinned) {
-    stickyHeader.style.position = 'sticky';
-    stickyHeader.style.top = `${mainHeaderHeight + 4}px`;
-    stickyHeader.style.zIndex = '20';
+    [stickyHeader, logsStickyHeader].forEach((el) => {
+      if (!el) return;
+      el.style.position = 'sticky';
+      el.style.top = `${mainHeaderHeight + 4}px`;
+      el.style.zIndex = '20';
+    });
 
     const scrollY = window.scrollY || window.pageYOffset || 0;
     if (!isTransfersHeaderCompact && scrollY > 125) {
@@ -274,12 +287,16 @@ function updateTransfersStickyHeaderState() {
       isTransfersHeaderCompact = false;
     }
   } else {
-    stickyHeader.style.position = 'static';
-    stickyHeader.style.top = '';
-    stickyHeader.style.zIndex = '';
+    [stickyHeader, logsStickyHeader].forEach((el) => {
+      if (!el) return;
+      el.style.position = 'static';
+      el.style.top = '';
+      el.style.zIndex = '';
+    });
     isTransfersHeaderCompact = false;
   }
 
+  // Active Transfers tab elements
   const topRow = document.getElementById('transfers-top-row');
   const filterBox = document.getElementById('transfers-filter-box');
   const headerTitle = document.getElementById('transfers-header-title');
@@ -289,9 +306,19 @@ function updateTransfersStickyHeaderState() {
   const privacyDesc = document.getElementById('transfers-privacy-desc');
   const groupBox = document.getElementById('transfers-group-box');
 
+  // Cancellation Log tab elements
+  const logsTopRow = document.getElementById('logs-top-row');
+  const logsFilterBox = document.getElementById('logs-filter-box');
+  const logsHeaderTitle = document.getElementById('logs-header-title');
+  const logsHeaderDesc = document.getElementById('logs-header-desc');
+  const logsPrivacyBox = document.getElementById('logs-privacy-box');
+  const logsPrivacyTitle = document.getElementById('logs-privacy-title');
+  const logsPrivacyDesc = document.getElementById('logs-privacy-desc');
+
   if (isTransfersHeaderCompact) {
-    stickyHeader.className =
-      'space-y-1.5 p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
+    if (stickyHeader)
+      stickyHeader.className =
+        'space-y-1.5 p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
     if (topRow) topRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-2 transition-all duration-200';
     if (filterBox)
       filterBox.className =
@@ -308,8 +335,25 @@ function updateTransfersStickyHeaderState() {
     if (groupBox)
       groupBox.className =
         'flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+
+    if (logsStickyHeader)
+      logsStickyHeader.className =
+        'p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
+    if (logsTopRow) logsTopRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-2 transition-all duration-200';
+    if (logsFilterBox)
+      logsFilterBox.className =
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+    if (logsHeaderTitle)
+      logsHeaderTitle.className = 'text-xs sm:text-sm font-semibold text-white truncate transition-all duration-200';
+    if (logsHeaderDesc) logsHeaderDesc.classList.add('hidden');
+    if (logsPrivacyBox)
+      logsPrivacyBox.className =
+        'lg:col-span-1 flex items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+    if (logsPrivacyTitle)
+      logsPrivacyTitle.className = 'text-xs font-semibold text-white truncate transition-all duration-200';
+    if (logsPrivacyDesc) logsPrivacyDesc.classList.add('hidden');
   } else {
-    stickyHeader.className = 'space-y-3 transition-all duration-200';
+    if (stickyHeader) stickyHeader.className = 'space-y-3 transition-all duration-200';
     if (topRow) topRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200';
     if (filterBox)
       filterBox.className =
@@ -326,6 +370,21 @@ function updateTransfersStickyHeaderState() {
     if (groupBox)
       groupBox.className =
         'flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200';
+
+    if (logsStickyHeader) logsStickyHeader.className = 'transition-all duration-200';
+    if (logsTopRow) logsTopRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200';
+    if (logsFilterBox)
+      logsFilterBox.className =
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+    if (logsHeaderTitle)
+      logsHeaderTitle.className = 'text-base font-semibold text-white truncate transition-all duration-200';
+    if (logsHeaderDesc) logsHeaderDesc.classList.remove('hidden');
+    if (logsPrivacyBox)
+      logsPrivacyBox.className =
+        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+    if (logsPrivacyTitle)
+      logsPrivacyTitle.className = 'text-sm font-semibold text-white truncate transition-all duration-200';
+    if (logsPrivacyDesc) logsPrivacyDesc.classList.remove('hidden');
   }
 }
 
@@ -1146,13 +1205,30 @@ function renderTrackers() {
 
 function renderLogs() {
   const tbody = document.getElementById('logs-table-body');
-  const logs = appState.activity_log || [];
+  const allLogs = appState.activity_log || [];
+  const filter = (document.getElementById('log-search')?.value || '').trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
+
+  const logs = allLogs.filter((entry) => {
+    if (!filter) return true;
+    const nameMatch = String(entry.transfer_name || '').toLowerCase().includes(filter);
+    const trackerIdMatch = String(entry.tracker_id || '').toLowerCase().includes(filter);
+    const trackerLabelMatch = getTrackerDisplayName(entry.tracker_id).toLowerCase().includes(filter);
+    const reasonMatch = String(entry.reason || '').toLowerCase().includes(filter);
+    const ruleMatch = String(entry.rule_summary || '').toLowerCase().includes(filter);
+    const statusMatch = String(entry.status_at_cancel || '').toLowerCase().includes(filter);
+    return nameMatch || trackerIdMatch || trackerLabelMatch || reasonMatch || ruleMatch || statusMatch;
+  });
+
   if (logs.length === 0) {
     tbody.innerHTML = `
       <tr>
         <td colspan="6" class="py-8 text-center text-slate-500 text-xs">
-          No transfers have been canceled yet.
+          ${
+            allLogs.length === 0
+              ? 'No transfers have been canceled yet.'
+              : 'No cancellation log entries match your filter.'
+          }
         </td>
       </tr>`;
     return;
