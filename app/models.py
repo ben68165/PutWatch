@@ -202,6 +202,10 @@ class AppConfig(BaseModel):
         default=False,
         description="If True, blurs transfer names in the Active Transfers tab for privacy.",
     )
+    pin_transfers_header: bool = Field(
+        default=True,
+        description="If True, pins the filter, privacy toggle, and grouping header on the Active Transfers tab to the top and compacts it when scrolling down (unless device screen space is too small).",
+    )
     default_rule: TrackerRule = Field(
         default_factory=lambda: TrackerRule(
             tracker_id="__default__",
@@ -237,6 +241,7 @@ class SettingsUpdateRequest(BaseModel):
     auto_discover_trackers: Optional[bool] = None
     clean_completed_after_cancel: Optional[bool] = None
     hide_transfer_names: Optional[bool] = None
+    pin_transfers_header: Optional[bool] = None
 
 
 class TrackerRuleUpdateRequest(BaseModel):

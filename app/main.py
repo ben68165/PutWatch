@@ -115,6 +115,7 @@ async def get_state() -> Dict[str, Any]:
             "auto_discover_trackers": cfg.auto_discover_trackers,
             "clean_completed_after_cancel": cfg.clean_completed_after_cancel,
             "hide_transfer_names": cfg.hide_transfer_names,
+            "pin_transfers_header": cfg.pin_transfers_header,
             "timezone": _configured_timezone(),
         },
         "monitor": {
@@ -189,6 +190,8 @@ async def update_settings(req: SettingsUpdateRequest) -> Dict[str, Any]:
         cfg.clean_completed_after_cancel = req.clean_completed_after_cancel
     if req.hide_transfer_names is not None:
         cfg.hide_transfer_names = req.hide_transfer_names
+    if req.pin_transfers_header is not None:
+        cfg.pin_transfers_header = req.pin_transfers_header
 
     store.save(cfg)
 

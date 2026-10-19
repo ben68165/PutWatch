@@ -32,7 +32,7 @@
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-amber-500/30 selection:text-amber-200">
 
   <!-- Top Header -->
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
+  <header id="main-app-header" class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-black text-sm tracking-tight">
@@ -170,104 +170,123 @@
 
     <!-- TAB 1: ACTIVE TRANSFERS -->
     <section id="tab-transfers" class="space-y-4">
-      <!-- Top Row: 3/4 Filter & Info Box + 1/4 Privacy Toggle Switch Box -->
-      <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <!-- Left 3/4 Box: Title, Filter Input & Manage Rules Link -->
-        <div class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-xl p-4">
-          <div>
-            <h2 class="text-base font-semibold text-white">Live Put.io Transfers &amp; Tracker Identification</h2>
-            <p class="text-xs text-slate-400 mt-0.5">
-              Trackers are automatically extracted from active transfers (`tracker` announce URL &amp; magnet `tr=` sources). Click any tracker badge to configure its cancellation rule.
-            </p>
+      <!-- Sticky & Auto-Compacting Upper Toolbar (Filter, Privacy Toggle & Grouping) -->
+      <div id="transfers-sticky-header" class="space-y-3 transition-all duration-200">
+        <!-- Top Row: 3/4 Filter & Info Box + 1/4 Privacy Toggle Switch Box -->
+        <div id="transfers-top-row" class="grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200">
+          <!-- Left 3/4 Box: Title, Filter Input & Manage Rules Link -->
+          <div id="transfers-filter-box" class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+            <div class="min-w-0">
+              <h2 id="transfers-header-title" class="text-base font-semibold text-white truncate transition-all duration-200">Live Put.io Transfers &amp; Tracker Identification</h2>
+              <p id="transfers-header-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">
+                Trackers are automatically extracted from active transfers (`tracker` announce URL &amp; magnet `tr=` sources). Click any tracker badge to configure its cancellation rule.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+              <input
+                type="text"
+                id="transfer-search"
+                oninput="renderTransfers()"
+                placeholder="Filter by name or tracker..."
+                class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition-all duration-200"
+              />
+              <button
+                onclick="switchTab('trackers')"
+                class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 whitespace-nowrap cursor-pointer transition"
+              >
+                Manage Rules &rarr;
+              </button>
+            </div>
           </div>
-          <div class="flex flex-wrap items-center gap-2.5 shrink-0">
-            <input
-              type="text"
-              id="transfer-search"
-              oninput="renderTransfers()"
-              placeholder="Filter by name or tracker..."
-              class="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500"
-            />
-            <button
-              onclick="switchTab('trackers')"
-              class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 whitespace-nowrap cursor-pointer"
+
+          <!-- Right 1/4 Box: Hide Transfer Names Toggle Switch -->
+          <div id="transfers-privacy-box" class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+            <div class="min-w-0">
+              <div id="transfers-privacy-title" class="text-sm font-semibold text-white truncate transition-all duration-200">Hide Transfer Names</div>
+              <p id="transfers-privacy-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">Blur titles in list for privacy</p>
+            </div>
+            <label
+              for="chk-hide-transfer-names"
+              title="Toggle transfer name privacy blur"
+              class="relative inline-flex items-center cursor-pointer shrink-0 select-none"
             >
-              Manage Rules &rarr;
+              <input
+                type="checkbox"
+                id="chk-hide-transfer-names"
+                onchange="toggleTransferNamesPrivacy(this.checked)"
+                class="sr-only peer"
+              />
+              <div
+                class="w-11 h-6 bg-slate-800 border border-slate-700 rounded-full peer peer-focus:outline-none peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 peer-checked:after:bg-slate-950 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:border-amber-400"
+              ></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Second Row: Full-Width Grouping Toggle Bar + Pin Header Control -->
+        <div id="transfers-group-box" class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Group Transfers By</span>
+            <span id="transfer-group-active-hint" class="text-xs text-slate-500">(Ungrouped)</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              id="btn-group-tracker"
+              onclick="toggleTransferGroupBy('tracker')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-tracker"></span>
+              <span>Tracker</span>
+            </button>
+            <button
+              type="button"
+              id="btn-group-status"
+              onclick="toggleTransferGroupBy('status')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-status"></span>
+              <span>Status</span>
+            </button>
+            <button
+              type="button"
+              id="btn-group-protection"
+              onclick="toggleTransferGroupBy('protection')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-protection"></span>
+              <span>Protected / Unprotected</span>
+            </button>
+            <button
+              type="button"
+              id="btn-group-notification"
+              onclick="toggleTransferGroupBy('notification')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-notification"></span>
+              <span>Notification Status</span>
+            </button>
+
+            <span class="hidden sm:inline-block h-4 w-px bg-slate-800 mx-0.5"></span>
+
+            <!-- Pin / Unpin Upper Section Button -->
+            <button
+              type="button"
+              id="btn-pin-transfers-header"
+              onclick="togglePinTransfersHeader()"
+              title="Pin or unpin this upper toolbar when scrolling down"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-amber-500/15 border-amber-500/40 text-amber-300"
+            >
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
+              <span id="label-pin-transfers-header">Pinned</span>
             </button>
           </div>
-        </div>
-
-        <!-- Right 1/4 Box: Hide Transfer Names Toggle Switch -->
-        <div class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-xl p-4">
-          <div class="min-w-0">
-            <div class="text-sm font-semibold text-white truncate">Hide Transfer Names</div>
-            <p class="text-xs text-slate-400 mt-0.5">Blur titles in list for privacy</p>
-          </div>
-          <label
-            for="chk-hide-transfer-names"
-            title="Toggle transfer name privacy blur"
-            class="relative inline-flex items-center cursor-pointer shrink-0 select-none"
-          >
-            <input
-              type="checkbox"
-              id="chk-hide-transfer-names"
-              onchange="toggleTransferNamesPrivacy(this.checked)"
-              class="sr-only peer"
-            />
-            <div
-              class="w-11 h-6 bg-slate-800 border border-slate-700 rounded-full peer peer-focus:outline-none peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 peer-checked:after:bg-slate-950 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:border-amber-400"
-            ></div>
-          </label>
-        </div>
-      </div>
-
-      <!-- Second Row: Full-Width Grouping Toggle Bar -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-xl px-4 py-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Group Transfers By</span>
-          <span id="transfer-group-active-hint" class="text-xs text-slate-500">(Ungrouped)</span>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            id="btn-group-tracker"
-            onclick="toggleTransferGroupBy('tracker')"
-            aria-pressed="false"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
-          >
-            <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-tracker"></span>
-            <span>Tracker</span>
-          </button>
-          <button
-            type="button"
-            id="btn-group-status"
-            onclick="toggleTransferGroupBy('status')"
-            aria-pressed="false"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
-          >
-            <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-status"></span>
-            <span>Status</span>
-          </button>
-          <button
-            type="button"
-            id="btn-group-protection"
-            onclick="toggleTransferGroupBy('protection')"
-            aria-pressed="false"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
-          >
-            <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-protection"></span>
-            <span>Protected / Unprotected</span>
-          </button>
-          <button
-            type="button"
-            id="btn-group-notification"
-            onclick="toggleTransferGroupBy('notification')"
-            aria-pressed="false"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
-          >
-            <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-notification"></span>
-            <span>Notification Status</span>
-          </button>
         </div>
       </div>
 
@@ -494,6 +513,19 @@
                 <div class="text-xs text-slate-400">Calls <code class="text-slate-300">/v2/transfers/cancel</code> followed by <code class="text-slate-300">/v2/transfers/clean</code> so canceled transfers are also removed from the transfer list (downloaded files in storage are kept).</div>
               </div>
               <input type="checkbox" id="chk-clean-after-cancel" class="mt-1 w-4 h-4 accent-amber-500" />
+            </label>
+
+            <label class="flex items-start justify-between gap-4 p-3 rounded-lg bg-slate-950/60 border border-slate-800 cursor-pointer">
+              <div>
+                <div class="text-sm font-medium text-white">Pin &amp; Auto-Compact Transfers Header on Scroll</div>
+                <div class="text-xs text-slate-400">
+                  Keep the filter, privacy toggle, and grouping bar pinned to the top and shrink it into a compact bar when scrolling down on the Active Transfers tab. Automatically overridden if device screen space does not allow for it.
+                </div>
+                <div id="settings-pin-device-override-hint" class="hidden text-[11px] text-amber-400 mt-1 font-medium">
+                  ⚠ Currently overridden on this device because screen space is too small.
+                </div>
+              </div>
+              <input type="checkbox" id="chk-pin-transfers-header" onchange="togglePinTransfersHeader(this.checked)" class="mt-1 w-4 h-4 accent-amber-500" />
             </label>
 
             <label class="flex items-start justify-between gap-4 p-3 rounded-lg bg-amber-950/20 border border-amber-500/30 cursor-pointer">

@@ -369,7 +369,21 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
 
             r_state = await client.get("/api/state")
             self.assertEqual(r_state.status_code, 200)
-            self.assertIn("trackers", r_state.json())
+            state_json = r_state.json()
+            self.assertIn("trackers", state_json)
+            self.assertIn("pin_transfers_header", state_json["settings"])
+
+            r_update = await client.put(
+                "/api/settings", json={"pin_transfers_header": False}
+            )
+            self.assertEqual(r_update.status_code, 200)
+            self.assertFalse(r_update.json()["settings"]["pin_transfers_header"])
+
+            r_restore = await client.put(
+                "/api/settings", json={"pin_transfers_header": True}
+            )
+            self.assertEqual(r_restore.status_code, 200)
+            self.assertTrue(r_restore.json()["settings"]["pin_transfers_header"])
 
             r_index = await client.get("/")
             self.assertEqual(r_index.status_code, 200)

@@ -11,6 +11,7 @@ let appState = {
 let currentTab = 'transfers';
 let currentTransferGrouping = 'none';
 let expandedTransferGroups = new Set();
+let isTransfersHeaderCompact = false;
 let oobPollTimer = null;
 
 function escapeHtml(str) {
@@ -123,6 +124,7 @@ function switchTab(tabName) {
       btn.classList.add('border-transparent', 'text-slate-400');
     }
   });
+  updateTransfersStickyHeaderState();
 }
 
 async function fetchState() {
@@ -194,6 +196,172 @@ async function toggleTransferNamesPrivacy(checked) {
   }
 }
 
+function doesDeviceAllowPinnedTransfersHeader() {
+  const vh = window.innerHeight || 800;
+  const vw = window.innerWidth || 1024;
+  const mainHeader = document.getElementById('main-app-header');
+  const mainHeaderHeight = mainHeader ? mainHeader.offsetHeight : 112;
+  // On narrow screens (< 640px), the 3/4 + 1/4 boxes stack vertically and grouping buttons wrap,
+  // requiring more vertical height than side-by-side desktop layouts.
+  const estimatedCompactHeight = vw < 640 ? 185 : vw < 1024 ? 140 : 105;
+
+  if (vh < 620) return false;
+  if (vw < 640 && vh < 780) return false;
+  if (mainHeaderHeight + estimatedCompactHeight > vh * 0.42) return false;
+  return true;
+}
+
+function updateTransfersStickyHeaderState() {
+  const stickyHeader = document.getElementById('transfers-sticky-header');
+  if (!stickyHeader) return;
+
+  const userPinEnabled = appState.settings?.pin_transfers_header !== false;
+  const deviceAllows = doesDeviceAllowPinnedTransfersHeader();
+  const effectivePinned = userPinEnabled && deviceAllows;
+
+  // Sync Settings checkbox & device override warning
+  const chkPinSettings = document.getElementById('chk-pin-transfers-header');
+  if (chkPinSettings) {
+    chkPinSettings.checked = userPinEnabled;
+  }
+  const overrideHint = document.getElementById('settings-pin-device-override-hint');
+  if (overrideHint) {
+    if (userPinEnabled && !deviceAllows) {
+      overrideHint.classList.remove('hidden');
+    } else {
+      overrideHint.classList.add('hidden');
+    }
+  }
+
+  // Sync in-tab Pin button
+  const pinBtn = document.getElementById('btn-pin-transfers-header');
+  const pinLabel = document.getElementById('label-pin-transfers-header');
+  if (pinBtn && pinLabel) {
+    if (userPinEnabled && !deviceAllows) {
+      pinBtn.setAttribute('aria-pressed', 'false');
+      pinBtn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-900 border-amber-500/30 text-amber-300/80';
+      pinBtn.title =
+        'Pinned header is enabled in options, but automatically overridden because device screen space is too small';
+      pinLabel.textContent = 'Auto-Unpinned (Screen Size)';
+    } else if (userPinEnabled) {
+      pinBtn.setAttribute('aria-pressed', 'true');
+      pinBtn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm';
+      pinBtn.title = 'Header is pinned and compacts when scrolling down (click to unpin)';
+      pinLabel.textContent = 'Pinned';
+    } else {
+      pinBtn.setAttribute('aria-pressed', 'false');
+      pinBtn.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white';
+      pinBtn.title = 'Click to pin this toolbar to the top when scrolling down';
+      pinLabel.textContent = 'Pin Header';
+    }
+  }
+
+  const mainHeader = document.getElementById('main-app-header');
+  const mainHeaderHeight = mainHeader ? mainHeader.offsetHeight : 112;
+
+  if (effectivePinned) {
+    stickyHeader.style.position = 'sticky';
+    stickyHeader.style.top = `${mainHeaderHeight + 4}px`;
+    stickyHeader.style.zIndex = '20';
+
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    if (!isTransfersHeaderCompact && scrollY > 125) {
+      isTransfersHeaderCompact = true;
+    } else if (isTransfersHeaderCompact && scrollY < 45) {
+      isTransfersHeaderCompact = false;
+    }
+  } else {
+    stickyHeader.style.position = 'static';
+    stickyHeader.style.top = '';
+    stickyHeader.style.zIndex = '';
+    isTransfersHeaderCompact = false;
+  }
+
+  const topRow = document.getElementById('transfers-top-row');
+  const filterBox = document.getElementById('transfers-filter-box');
+  const headerTitle = document.getElementById('transfers-header-title');
+  const headerDesc = document.getElementById('transfers-header-desc');
+  const privacyBox = document.getElementById('transfers-privacy-box');
+  const privacyTitle = document.getElementById('transfers-privacy-title');
+  const privacyDesc = document.getElementById('transfers-privacy-desc');
+  const groupBox = document.getElementById('transfers-group-box');
+
+  if (isTransfersHeaderCompact) {
+    stickyHeader.className =
+      'space-y-1.5 p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
+    if (topRow) topRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-2 transition-all duration-200';
+    if (filterBox)
+      filterBox.className =
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+    if (headerTitle)
+      headerTitle.className = 'text-xs sm:text-sm font-semibold text-white truncate transition-all duration-200';
+    if (headerDesc) headerDesc.classList.add('hidden');
+    if (privacyBox)
+      privacyBox.className =
+        'lg:col-span-1 flex items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+    if (privacyTitle)
+      privacyTitle.className = 'text-xs font-semibold text-white truncate transition-all duration-200';
+    if (privacyDesc) privacyDesc.classList.add('hidden');
+    if (groupBox)
+      groupBox.className =
+        'flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
+  } else {
+    stickyHeader.className = 'space-y-3 transition-all duration-200';
+    if (topRow) topRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200';
+    if (filterBox)
+      filterBox.className =
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+    if (headerTitle)
+      headerTitle.className = 'text-base font-semibold text-white truncate transition-all duration-200';
+    if (headerDesc) headerDesc.classList.remove('hidden');
+    if (privacyBox)
+      privacyBox.className =
+        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+    if (privacyTitle)
+      privacyTitle.className = 'text-sm font-semibold text-white truncate transition-all duration-200';
+    if (privacyDesc) privacyDesc.classList.remove('hidden');
+    if (groupBox)
+      groupBox.className =
+        'flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200';
+  }
+}
+
+async function togglePinTransfersHeader(explicitVal) {
+  if (!appState.settings) appState.settings = {};
+  const currentVal = appState.settings.pin_transfers_header !== false;
+  const nextVal = typeof explicitVal === 'boolean' ? explicitVal : !currentVal;
+  appState.settings.pin_transfers_header = nextVal;
+  updateTransfersStickyHeaderState();
+
+  const deviceAllows = doesDeviceAllowPinnedTransfersHeader();
+  if (nextVal && !deviceAllows) {
+    showToast(
+      'Pin Transfers Header enabled in options, but currently overridden on this device due to limited screen space.',
+      'info'
+    );
+  } else {
+    showToast(
+      nextVal
+        ? 'Transfers header pinned (will stick and compact on scroll).'
+        : 'Transfers header unpinned.',
+      'info'
+    );
+  }
+
+  try {
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin_transfers_header: nextVal }),
+    });
+  } catch (_err) {
+    // ignore transient error
+  }
+}
+
 function updateUI(state) {
   appState = state;
   const s = state.settings || {};
@@ -205,6 +373,7 @@ function updateUI(state) {
 
   // Sync privacy toggle switches across Active Transfers and Cancellation Log tabs
   syncPrivacyTogglesUI(Boolean(s.hide_transfer_names));
+  updateTransfersStickyHeaderState();
 
   // Badges
   document.getElementById('badge-transfers-count').textContent = transfers.length;
@@ -1035,6 +1204,10 @@ function renderSettingsForm() {
   document.getElementById('chk-monitoring-enabled').checked = Boolean(s.monitoring_enabled);
   document.getElementById('chk-auto-discover').checked = Boolean(s.auto_discover_trackers);
   document.getElementById('chk-clean-after-cancel').checked = Boolean(s.clean_completed_after_cancel);
+  const pinChk = document.getElementById('chk-pin-transfers-header');
+  if (pinChk) {
+    pinChk.checked = s.pin_transfers_header !== false;
+  }
   document.getElementById('chk-dry-run').checked = Boolean(s.dry_run);
   document.getElementById('input-poll-interval').value = s.poll_interval_minutes || 5;
 
@@ -1544,10 +1717,12 @@ async function saveToken() {
 
 async function saveServiceSettings() {
   const appIdRaw = document.getElementById('input-putio-app-id')?.value.trim();
+  const pinChk = document.getElementById('chk-pin-transfers-header');
   const payload = {
     monitoring_enabled: document.getElementById('chk-monitoring-enabled').checked,
     auto_discover_trackers: document.getElementById('chk-auto-discover').checked,
     clean_completed_after_cancel: document.getElementById('chk-clean-after-cancel').checked,
+    pin_transfers_header: pinChk ? pinChk.checked : true,
     dry_run: document.getElementById('chk-dry-run').checked,
     poll_interval_minutes: Math.max(1, Number(document.getElementById('input-poll-interval').value) || 5),
   };
@@ -1661,8 +1836,25 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+window.addEventListener(
+  'scroll',
+  () => {
+    updateTransfersStickyHeaderState();
+  },
+  { passive: true }
+);
+
+window.addEventListener(
+  'resize',
+  () => {
+    updateTransfersStickyHeaderState();
+  },
+  { passive: true }
+);
+
 // Initial load & auto-refresh UI state every 10 seconds
 document.addEventListener('DOMContentLoaded', () => {
+  updateTransfersStickyHeaderState();
   fetchState();
   setInterval(fetchState, 10000);
 });
