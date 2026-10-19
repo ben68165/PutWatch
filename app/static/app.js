@@ -9,6 +9,7 @@ let appState = {
 };
 
 let currentTab = 'transfers';
+let currentTransferGrouping = 'none';
 let oobPollTimer = null;
 
 function escapeHtml(str) {
@@ -284,10 +285,213 @@ function getStatusBadgeHtml(status) {
   return `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${cls}">${escapeHtml(st)}</span>`;
 }
 
+function toggleTransferGroupBy(mode) {
+  if (currentTransferGrouping === mode) {
+    currentTransferGrouping = 'none';
+  } else {
+    currentTransferGrouping = mode;
+  }
+  updateTransferGroupButtonsUI();
+  renderTransfers();
+}
+
+function updateTransferGroupButtonsUI() {
+  const modes = ['tracker', 'status', 'protection'];
+  modes.forEach((m) => {
+    const btn = document.getElementById(`btn-group-${m}`);
+    const dot = document.getElementById(`dot-group-${m}`);
+    if (!btn) return;
+    const active = currentTransferGrouping === m;
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    if (active) {
+      btn.className =
+        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400 transition';
+    } else {
+      btn.className =
+        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-600 transition';
+    }
+  });
+
+  const hint = document.getElementById('transfer-group-active-hint');
+  if (hint) {
+    const hintLabels = {
+      none: '(Ungrouped)',
+      tracker: '(Grouped by Tracker — click active button to ungroup)',
+      status: '(Grouped by Status — click active button to ungroup)',
+      protection: '(Grouped by Protected / Unprotected — click active button to ungroup)',
+    };
+    hint.textContent = hintLabels[currentTransferGrouping] || '(Ungrouped)';
+  }
+}
+
+function renderSingleTransferCardHtml(t, hideNames) {
+  const ev = t.evaluation || {};
+  const ratio = Number(t.current_ratio || 0).toFixed(2);
+  const seedingSecs = Number(t.seconds_seeding || 0);
+  const upSpeed = Number(t.up_speed || 0);
+  const downSpeed = Number(t.down_speed || 0);
+  const trackersList = t.trackers_list || [{ tracker_id: t.primary_tracker || 'untracked' }];
+  const primaryTrackerLabel = getTrackerDisplayName(t.primary_tracker);
+
+  const trackerBadges = trackersList
+    .map((tr) => {
+      const trId = tr.tracker_id;
+      const trLabel = getTrackerDisplayName(trId);
+      const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
+      const isEnabled = configuredRule && configuredRule.enabled;
+      return `
+        <button
+          onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
+          title="Click to configure rule for ${escapeHtml(trLabel)}"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+            isEnabled
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+              : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
+          }"
+        >
+          <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
+          <span>${escapeHtml(trLabel)}</span>
+          <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
+        </button>`;
+    })
+    .join('');
+
+  const protectionBadge = ev.protection_active && ev.protection_label
+    ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
+         ★ Protected: ${escapeHtml(ev.protection_label)}
+       </span>`
+    : '';
+
+  let ruleProgressHtml = '';
+  if (ev.rule_enabled) {
+    const barColor = ev.protection_active ? 'bg-sky-400' : 'bg-amber-500';
+    const timeLabel = ev.protection_active
+      ? `Keep-Alive Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+      : ev.cancel_on_completed
+      ? 'Immediate Cancel on Download Complete'
+      : `Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`;
+
+    const timeBar = ev.use_time_rule
+      ? `
+        <div class="space-y-1">
+          <div class="flex justify-between text-[11px]">
+            <span class="text-slate-400">${timeLabel}</span>
+            <span class="font-mono text-slate-200">${ev.time_progress_pct}% ${
+              ev.remaining_seconds !== null && ev.remaining_seconds > 0
+                ? `(${formatDuration(ev.remaining_seconds)} left)`
+                : ev.remaining_seconds === 0
+                ? '(Reached!)'
+                : ''
+            }</span>
+          </div>
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full ${barColor} transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
+          </div>
+        </div>`
+      : '';
+
+    const ratioBar = ev.use_ratio_rule
+      ? `
+        <div class="space-y-1">
+          <div class="flex justify-between text-[11px]">
+            <span class="text-slate-400">Ratio Progress (${ratio} / ${Number(ev.target_ratio).toFixed(2)})</span>
+            <span class="font-mono text-slate-200">${ev.ratio_progress_pct}%</span>
+          </div>
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full bg-emerald-500 transition-all" style="width: ${Math.min(100, ev.ratio_progress_pct)}%"></div>
+          </div>
+        </div>`
+      : '';
+
+    ruleProgressHtml = `
+      <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[11px]">Active Rule: ${escapeHtml(ev.rule_summary)}</span>
+            ${protectionBadge}
+            ${
+              !ev.eligible_status
+                ? '<span class="text-[11px] text-slate-500">(Waiting for SEEDING state)</span>'
+                : ''
+            }
+          </div>
+          ${
+            ev.should_cancel
+              ? '<span class="text-xs font-bold text-red-400">Threshold Reached</span>'
+              : ''
+          }
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          ${timeBar}
+          ${ratioBar}
+        </div>
+      </div>`;
+  } else {
+    ruleProgressHtml = `
+      <div class="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
+        <span>No active auto-cancel rule for <strong class="text-slate-300">${escapeHtml(primaryTrackerLabel)}</strong></span>
+        <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer">
+          + Set Rule for ${escapeHtml(primaryTrackerLabel)}
+        </button>
+      </div>`;
+  }
+
+  const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
+  const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(t.name)}"`;
+
+  return `
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700/80 transition">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div class="space-y-1.5 min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2">
+            ${getStatusBadgeHtml(t.status)}
+            <h3 class="font-semibold text-sm sm:text-base text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
+              ${escapeHtml(t.name)}
+            </h3>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 pt-0.5">
+            <span class="text-xs text-slate-400">Identified Tracker(s):</span>
+            ${trackerBadges}
+          </div>
+        </div>
+
+        <!-- Metrics & Manual Cancel -->
+        <div class="flex flex-wrap items-center gap-4 text-xs sm:text-sm shrink-0">
+          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+            <span class="text-slate-400 text-xs block">Seeding Time</span>
+            <span class="font-mono font-semibold text-white">${formatDuration(seedingSecs)}</span>
+          </div>
+          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+            <span class="text-slate-400 text-xs block">Share Ratio</span>
+            <span class="font-mono font-semibold text-emerald-400">${ratio}</span>
+          </div>
+          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+            <span class="text-slate-400 text-xs block">Size / Speed</span>
+            <span class="font-mono text-slate-200 text-xs">
+              ${formatBytes(t.size)}
+              ${upSpeed > 0 ? ` &bull; &uarr;${formatBytes(upSpeed)}/s` : ''}
+              ${downSpeed > 0 ? ` &bull; &darr;${formatBytes(downSpeed)}/s` : ''}
+            </span>
+          </div>
+          <button
+            onclick="manualCancelTransfer(${Number(t.id)}, ${JSON.stringify(String(t.name || '')).replace(/"/g, '&quot;')})"
+            class="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold transition cursor-pointer"
+          >
+            Cancel &amp; Remove
+          </button>
+        </div>
+      </div>
+      ${ruleProgressHtml}
+    </div>`;
+}
+
 function renderTransfers() {
   const container = document.getElementById('transfers-list');
   const filter = (document.getElementById('transfer-search')?.value || '').trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
+  updateTransferGroupButtonsUI();
 
   const transfers = (appState.transfers || []).filter((t) => {
     if (!filter) return true;
@@ -322,165 +526,127 @@ function renderTransfers() {
     return;
   }
 
-  container.innerHTML = transfers
-    .map((t) => {
-      const ev = t.evaluation || {};
-      const ratio = Number(t.current_ratio || 0).toFixed(2);
-      const seedingSecs = Number(t.seconds_seeding || 0);
-      const upSpeed = Number(t.up_speed || 0);
-      const downSpeed = Number(t.down_speed || 0);
-      const trackersList = t.trackers_list || [{ tracker_id: t.primary_tracker || 'untracked' }];
-      const primaryTrackerLabel = getTrackerDisplayName(t.primary_tracker);
+  if (currentTransferGrouping === 'none') {
+    container.innerHTML = transfers
+      .map((t) => renderSingleTransferCardHtml(t, hideNames))
+      .join('');
+    return;
+  }
 
-      const trackerBadges = trackersList
-        .map((tr) => {
-          const trId = tr.tracker_id;
-          const trLabel = getTrackerDisplayName(trId);
-          const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
-          const isEnabled = configuredRule && configuredRule.enabled;
-          return `
-            <button
-              onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
-              title="Click to configure rule for ${escapeHtml(trLabel)}"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
-                isEnabled
-                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-                  : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
-              }"
-            >
-              <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
-              <span>${escapeHtml(trLabel)}</span>
-              <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
-            </button>`;
-        })
-        .join('');
+  // Build groups according to currentTransferGrouping
+  let groups = [];
 
-      const protectionBadge = ev.protection_active && ev.protection_label
-        ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
-             ★ Protected: ${escapeHtml(ev.protection_label)}
-           </span>`
-        : '';
-
-      let ruleProgressHtml = '';
-      if (ev.rule_enabled) {
-        const barColor = ev.protection_active ? 'bg-sky-400' : 'bg-amber-500';
-        const timeLabel = ev.protection_active
-          ? `Keep-Alive Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
-          : ev.cancel_on_completed
-          ? 'Immediate Cancel on Download Complete'
-          : `Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`;
-
-        const timeBar = ev.use_time_rule
-          ? `
-            <div class="space-y-1">
-              <div class="flex justify-between text-[11px]">
-                <span class="text-slate-400">${timeLabel}</span>
-                <span class="font-mono text-slate-200">${ev.time_progress_pct}% ${
-                  ev.remaining_seconds !== null && ev.remaining_seconds > 0
-                    ? `(${formatDuration(ev.remaining_seconds)} left)`
-                    : ev.remaining_seconds === 0
-                    ? '(Reached!)'
-                    : ''
-                }</span>
-              </div>
-              <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full ${barColor} transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
-              </div>
-            </div>`
-          : '';
-
-        const ratioBar = ev.use_ratio_rule
-          ? `
-            <div class="space-y-1">
-              <div class="flex justify-between text-[11px]">
-                <span class="text-slate-400">Ratio Progress (${ratio} / ${Number(ev.target_ratio).toFixed(2)})</span>
-                <span class="font-mono text-slate-200">${ev.ratio_progress_pct}%</span>
-              </div>
-              <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full bg-emerald-500 transition-all" style="width: ${Math.min(100, ev.ratio_progress_pct)}%"></div>
-              </div>
-            </div>`
-          : '';
-
-        ruleProgressHtml = `
-          <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[11px]">Active Rule: ${escapeHtml(ev.rule_summary)}</span>
-                ${protectionBadge}
-                ${
-                  !ev.eligible_status
-                    ? '<span class="text-[11px] text-slate-500">(Waiting for SEEDING state)</span>'
-                    : ''
-                }
-              </div>
-              ${
-                ev.should_cancel
-                  ? '<span class="text-xs font-bold text-red-400">Threshold Reached</span>'
-                  : ''
-              }
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              ${timeBar}
-              ${ratioBar}
-            </div>
-          </div>`;
-      } else {
-        ruleProgressHtml = `
-          <div class="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
-            <span>No active auto-cancel rule for <strong class="text-slate-300">${escapeHtml(primaryTrackerLabel)}</strong></span>
-            <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer">
-              + Set Rule for ${escapeHtml(primaryTrackerLabel)}
-            </button>
-          </div>`;
+  if (currentTransferGrouping === 'tracker') {
+    const map = new Map();
+    transfers.forEach((t) => {
+      const trId = t.primary_tracker || 'untracked';
+      if (!map.has(trId)) {
+        map.set(trId, []);
       }
+      map.get(trId).push(t);
+    });
+    groups = Array.from(map.entries())
+      .map(([trId, items]) => {
+        const label = getTrackerDisplayName(trId);
+        const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
+        const isEnabled = configuredRule && configuredRule.enabled;
+        const actionHtml = `
+          <button
+            onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
+            class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-amber-400 border border-slate-700 cursor-pointer"
+          >
+            ${isEnabled ? 'Edit Active Rule' : '+ Configure Rule'}
+          </button>`;
+        return {
+          key: trId,
+          titleHtml: `
+            <span class="inline-flex items-center gap-2 font-bold text-sm text-white">
+              <span class="w-2 h-2 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
+              <span>${escapeHtml(label)}</span>
+            </span>`,
+          actionHtml,
+          items,
+        };
+      })
+      .sort((a, b) => b.items.length - a.items.length);
+  } else if (currentTransferGrouping === 'status') {
+    const statusOrder = ['SEEDING', 'DOWNLOADING', 'COMPLETING', 'COMPLETED', 'IN_QUEUE', 'WAITING', 'ERROR'];
+    const map = new Map();
+    transfers.forEach((t) => {
+      const st = String(t.status || 'UNKNOWN').toUpperCase();
+      if (!map.has(st)) {
+        map.set(st, []);
+      }
+      map.get(st).push(t);
+    });
+    groups = Array.from(map.entries())
+      .map(([st, items]) => ({
+        key: st,
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            ${getStatusBadgeHtml(st)}
+            <span class="font-bold text-sm text-white">${escapeHtml(st)} Transfers</span>
+          </span>`,
+        actionHtml: '',
+        items,
+      }))
+      .sort((a, b) => {
+        const idxA = statusOrder.indexOf(a.key);
+        const idxB = statusOrder.indexOf(b.key);
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+      });
+  } else if (currentTransferGrouping === 'protection') {
+    const protectedItems = transfers.filter((t) => Boolean(t.evaluation && t.evaluation.protection_active));
+    const unprotectedItems = transfers.filter((t) => !t.evaluation || !t.evaluation.protection_active);
+    groups = [
+      {
+        key: 'protected',
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">★ Protected</span>
+            <span class="font-bold text-sm text-white">Keep-Alive Protected Transfers (Top Seeded / Largest)</span>
+          </span>`,
+        actionHtml: '',
+        items: protectedItems,
+      },
+      {
+        key: 'unprotected',
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">Unprotected</span>
+            <span class="font-bold text-sm text-white">Standard Transfers (Not Protected by Keep-Alive)</span>
+          </span>`,
+        actionHtml: '',
+        items: unprotectedItems,
+      },
+    ];
+  }
 
-      const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
-      const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(t.name)}"`;
+  container.innerHTML = groups
+    .map((g) => {
+      const totalSize = g.items.reduce((acc, item) => acc + (Number(item.size) || 0), 0);
+      const bodyHtml =
+        g.items.length > 0
+          ? g.items.map((t) => renderSingleTransferCardHtml(t, hideNames)).join('')
+          : `<div class="text-xs text-slate-500 py-3 px-2 italic">No transfers currently in this group.</div>`;
 
       return `
-        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700/80 transition">
-          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div class="space-y-1.5 min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                ${getStatusBadgeHtml(t.status)}
-                <h3 class="font-semibold text-sm sm:text-base text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
-                  ${escapeHtml(t.name)}
-                </h3>
-              </div>
-              <div class="flex flex-wrap items-center gap-2 pt-0.5">
-                <span class="text-xs text-slate-400">Identified Tracker(s):</span>
-                ${trackerBadges}
-              </div>
+        <div class="bg-slate-950/60 border border-slate-800/90 rounded-xl p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800/80">
+            <div class="flex flex-wrap items-center gap-2.5">
+              ${g.titleHtml}
+              <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-slate-800 text-slate-300">
+                ${g.items.length} transfer${g.items.length === 1 ? '' : 's'}
+              </span>
+              <span class="text-xs font-mono text-slate-400">
+                Total: ${formatBytes(totalSize)}
+              </span>
             </div>
-
-            <!-- Metrics & Manual Cancel -->
-            <div class="flex flex-wrap items-center gap-4 text-xs sm:text-sm shrink-0">
-              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-                <span class="text-slate-400 text-xs block">Seeding Time</span>
-                <span class="font-mono font-semibold text-white">${formatDuration(seedingSecs)}</span>
-              </div>
-              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-                <span class="text-slate-400 text-xs block">Share Ratio</span>
-                <span class="font-mono font-semibold text-emerald-400">${ratio}</span>
-              </div>
-              <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-                <span class="text-slate-400 text-xs block">Size / Speed</span>
-                <span class="font-mono text-slate-200 text-xs">
-                  ${formatBytes(t.size)}
-                  ${upSpeed > 0 ? ` &bull; &uarr;${formatBytes(upSpeed)}/s` : ''}
-                  ${downSpeed > 0 ? ` &bull; &darr;${formatBytes(downSpeed)}/s` : ''}
-                </span>
-              </div>
-              <button
-                onclick="manualCancelTransfer(${Number(t.id)}, ${JSON.stringify(String(t.name || '')).replace(/"/g, '&quot;')})"
-                class="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold transition cursor-pointer"
-              >
-                Cancel &amp; Remove
-              </button>
-            </div>
+            <div>${g.actionHtml}</div>
           </div>
-          ${ruleProgressHtml}
+          <div class="space-y-3">
+            ${bodyHtml}
+          </div>
         </div>`;
     })
     .join('');
