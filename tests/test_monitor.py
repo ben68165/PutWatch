@@ -219,6 +219,65 @@ class TestTrackerMonitor(unittest.TestCase):
         )
         self.assertFalse(ev_seeding["should_cancel"])
 
+    def test_stalled_download_and_long_queued_detection(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        rule = TrackerRule(
+            tracker_id="tracker.stalled.org",
+            enabled=True,
+            notify_stalled_download_enabled=True,
+            notify_stalled_download_hours=6.0,   # Notify after 6h downloading
+            cancel_stalled_download_enabled=True,
+            cancel_stalled_download_hours=24.0,  # Cancel after 24h downloading
+            notify_long_queued_enabled=True,
+            notify_long_queued_hours=4.0,        # Notify after 4h queued
+            use_time_rule=False,
+            use_ratio_rule=False,
+        )
+
+        # 1. DOWNLOADING for 8h -> Notified & highlighted, but NOT canceled yet (< 24h)
+        t_down_8h = {
+            "id": 201,
+            "name": "Stalled.Download.8h",
+            "status": "DOWNLOADING",
+            "created_at": (now - timedelta(hours=8)).isoformat(),
+            "seconds_seeding": 0,
+            "current_ratio": 0.0,
+        }
+        ev_down_8h = evaluate_transfer_against_rule(t_down_8h, rule)
+        self.assertTrue(ev_down_8h["notification_active"])
+        self.assertEqual(ev_down_8h["notification_type"], "stalled_download")
+        self.assertFalse(ev_down_8h["should_cancel"])
+
+        # 2. DOWNLOADING for 26h -> Notified AND canceled (>= 24h)
+        t_down_26h = {
+            "id": 202,
+            "name": "Stalled.Download.26h",
+            "status": "DOWNLOADING",
+            "created_at": (now - timedelta(hours=26)).isoformat(),
+            "seconds_seeding": 0,
+            "current_ratio": 0.0,
+        }
+        ev_down_26h = evaluate_transfer_against_rule(t_down_26h, rule)
+        self.assertTrue(ev_down_26h["notification_active"])
+        self.assertTrue(ev_down_26h["should_cancel"])
+        self.assertIn("Stalled Download", ev_down_26h["reason"])
+
+        # 3. IN_QUEUE for 30h -> Must NOT be canceled by stalled download rule, but MUST be notified by long-queued rule
+        t_queued_30h = {
+            "id": 203,
+            "name": "Long.Queued.30h",
+            "status": "IN_QUEUE",
+            "created_at": (now - timedelta(hours=30)).isoformat(),
+            "seconds_seeding": 0,
+            "current_ratio": 0.0,
+        }
+        ev_queued_30h = evaluate_transfer_against_rule(t_queued_30h, rule)
+        self.assertFalse(ev_queued_30h["should_cancel"])
+        self.assertTrue(ev_queued_30h["notification_active"])
+        self.assertEqual(ev_queued_30h["notification_type"], "long_queued")
+        self.assertEqual(ev_queued_30h["notification_label"], "Queued Too Long")
 
 
 class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):

@@ -70,6 +70,12 @@ def describe_rule(rule: TrackerRule) -> str:
 
     if rule.cancel_completed_on_first_scan and not rule.cancel_on_completed:
         base_str += " + Instant COMPLETED"
+    if rule.cancel_stalled_download_enabled:
+        base_str += f" + Stalled DL >= {format_duration(rule.cancel_stalled_download_hours * 3600)}"
+    if rule.notify_stalled_download_enabled:
+        base_str += f" + Notify Stalled DL >= {format_duration(rule.notify_stalled_download_hours * 3600)}"
+    if rule.notify_long_queued_enabled:
+        base_str += f" + Notify Queued >= {format_duration(rule.notify_long_queued_hours * 3600)}"
 
     keep_parts: List[str] = []
     if rule.keep_top_seeded_enabled:
@@ -209,6 +215,8 @@ def evaluate_transfer_against_rule(
     Evaluate a single Put.io transfer dict against a TrackerRule, factoring in:
       - Immediate cancellation if already COMPLETED on first scan (`cancel_completed_on_first_scan`)
       - Immediate cancellation upon download completion (`cancel_on_completed`)
+      - Stalled download notification & auto-cancellation (`notify_stalled_download_enabled`, `cancel_stalled_download_enabled`) for DOWNLOADING transfers only
+      - Long-queued transfer notification (`notify_long_queued_enabled`) for IN_QUEUE / WAITING transfers
       - Time threshold (`use_time_rule`, `max_time_minutes`)
       - Ratio threshold (`use_ratio_rule`, `max_ratio`)
       - Combination logic (`OR` vs `AND`)
@@ -221,13 +229,16 @@ def evaluate_transfer_against_rule(
     if was_completed_on_first_scan is None:
         was_completed_on_first_scan = status == "COMPLETED"
 
-    created_dt = _parse_putio_datetime(transfer.get("created_at"))
-    now_dt = datetime.now(timezone.utc)
-    age_seconds = (
-        max(0, int((now_dt - created_dt).total_seconds()))
-        if created_dt
-        else seeding_seconds
+    created_dt = _parse_putio_datetime(
+        transfer.get("created_at") or transfer.get("started_at")
     )
+    now_dt = datetime.now(timezone.utc)
+    if created_dt:
+        age_seconds = max(0, int((now_dt - created_dt).total_seconds()))
+    elif transfer.get("age_seconds") is not None:
+        age_seconds = max(0, int(transfer.get("age_seconds") or 0))
+    else:
+        age_seconds = seeding_seconds
 
     if not rule or not rule.enabled:
         return {
@@ -239,6 +250,10 @@ def evaluate_transfer_against_rule(
             "reason": None,
             "protection_label": None,
             "protection_active": False,
+            "notification_active": False,
+            "notification_type": None,
+            "notification_label": None,
+            "notification_reason": None,
             "time_progress_pct": 0.0,
             "ratio_progress_pct": 0.0,
             "remaining_seconds": None,
@@ -267,6 +282,10 @@ def evaluate_transfer_against_rule(
             "reason": "Already COMPLETED on first scan (instant/cached transfer on Put.io)",
             "protection_label": None,
             "protection_active": False,
+            "notification_active": False,
+            "notification_type": None,
+            "notification_label": None,
+            "notification_reason": None,
             "keep_alive_target_seconds": None,
             "time_progress_pct": 100.0,
             "ratio_progress_pct": 100.0,
@@ -276,8 +295,46 @@ def evaluate_transfer_against_rule(
             "target_ratio": None,
         }
 
+    is_downloading = status == "DOWNLOADING"
+    is_queued = status in ("IN_QUEUE", "WAITING", "QUEUED")
     seeding_or_done = status in ("SEEDING", "COMPLETED", "COMPLETING")
-    eligible_status = seeding_or_done or bool(rule.include_downloading)
+
+    # Evaluate Notification / Highlight status (Stalled DOWNLOADING or Long-Queued IN_QUEUE/WAITING)
+    notification_active = False
+    notification_type: Optional[str] = None
+    notification_label: Optional[str] = None
+    notification_reason: Optional[str] = None
+
+    if is_downloading and rule.notify_stalled_download_enabled:
+        stalled_notify_secs = max(
+            0.0, float(rule.notify_stalled_download_hours) * 3600.0
+        )
+        if age_seconds >= stalled_notify_secs:
+            notification_active = True
+            notification_type = "stalled_download"
+            notification_label = "Stalled Download"
+            notification_reason = (
+                f"Downloading for {format_duration(age_seconds)} "
+                f"(>= {format_duration(stalled_notify_secs)})"
+            )
+    elif is_queued and rule.notify_long_queued_enabled:
+        queued_notify_secs = max(
+            0.0, float(rule.notify_long_queued_hours) * 3600.0
+        )
+        if age_seconds >= queued_notify_secs:
+            notification_active = True
+            notification_type = "long_queued"
+            notification_label = "Queued Too Long"
+            notification_reason = (
+                f"Queued for {format_duration(age_seconds)} "
+                f"(>= {format_duration(queued_notify_secs)})"
+            )
+
+    eligible_status = (
+        seeding_or_done
+        or (is_downloading and bool(rule.cancel_stalled_download_enabled))
+        or bool(rule.include_downloading)
+    )
 
     evaluated_seconds = (
         seeding_seconds if rule.time_metric == "seeding_time" else age_seconds
@@ -290,11 +347,28 @@ def evaluate_transfer_against_rule(
     time_progress_pct = 0.0
     remaining_seconds: Optional[int] = None
 
-    if rule.cancel_on_completed:
+    # Stalled Download Cancellation applies strictly to DOWNLOADING transfers (never queued transfers)
+    if is_downloading and rule.cancel_stalled_download_enabled:
+        stalled_cancel_secs = max(
+            0.0, float(rule.cancel_stalled_download_hours) * 3600.0
+        )
+        evaluated_seconds = age_seconds
+        target_seconds = stalled_cancel_secs
+        if stalled_cancel_secs <= 0:
+            time_reached = True
+            time_progress_pct = 100.0
+            remaining_seconds = 0
+        else:
+            time_reached = age_seconds >= stalled_cancel_secs
+            time_progress_pct = min(
+                100.0, round((age_seconds / stalled_cancel_secs) * 100.0, 1)
+            )
+            remaining_seconds = max(0, int(stalled_cancel_secs - age_seconds))
+    elif rule.cancel_on_completed:
         time_reached = seeding_or_done
         time_progress_pct = 100.0 if seeding_or_done else 0.0
         remaining_seconds = 0 if seeding_or_done else None
-    elif rule.use_time_rule:
+    elif rule.use_time_rule and seeding_or_done:
         if target_seconds <= 0:
             time_reached = True
             time_progress_pct = 100.0
@@ -308,7 +382,7 @@ def evaluate_transfer_against_rule(
 
     ratio_reached = False
     ratio_progress_pct = 0.0
-    if rule.use_ratio_rule:
+    if rule.use_ratio_rule and seeding_or_done:
         if target_ratio <= 0:
             ratio_reached = True
             ratio_progress_pct = 100.0
@@ -322,7 +396,13 @@ def evaluate_transfer_against_rule(
     reasons: List[str] = []
     metric_label = "Seeding time" if rule.time_metric == "seeding_time" else "Transfer age"
 
-    if eligible_status:
+    if is_downloading and rule.cancel_stalled_download_enabled:
+        if time_reached:
+            base_should_cancel = True
+            reasons.append(
+                f"Stalled Download: Downloading for {format_duration(age_seconds)} >= {format_duration(target_seconds)}"
+            )
+    elif seeding_or_done or bool(rule.include_downloading):
         if rule.cancel_on_completed and seeding_or_done:
             base_should_cancel = True
             reasons.append("Files downloaded to Put.io (Immediate Cancel Rule)")
@@ -382,7 +462,10 @@ def evaluate_transfer_against_rule(
             )
 
     effective_use_time = bool(
-        rule.use_time_rule or rule.cancel_on_completed or protection_active
+        (rule.use_time_rule and seeding_or_done)
+        or rule.cancel_on_completed
+        or protection_active
+        or (is_downloading and rule.cancel_stalled_download_enabled)
     )
 
     return {
@@ -392,13 +475,18 @@ def evaluate_transfer_against_rule(
         "condition_operator": rule.condition_operator,
         "cancel_on_completed": rule.cancel_on_completed,
         "cancel_completed_on_first_scan": rule.cancel_completed_on_first_scan,
+        "cancel_stalled_download_enabled": rule.cancel_stalled_download_enabled,
         "use_time_rule": effective_use_time,
-        "use_ratio_rule": rule.use_ratio_rule,
+        "use_ratio_rule": bool(rule.use_ratio_rule and seeding_or_done),
         "eligible_status": eligible_status,
         "should_cancel": should_cancel,
         "reason": " | ".join(reasons) if reasons else None,
         "protection_label": protection_label,
         "protection_active": protection_active,
+        "notification_active": notification_active,
+        "notification_type": notification_type,
+        "notification_label": notification_label,
+        "notification_reason": notification_reason,
         "keep_alive_target_seconds": int(keep_alive_target_seconds) if protection_label else None,
         "time_progress_pct": time_progress_pct,
         "ratio_progress_pct": ratio_progress_pct,
@@ -708,6 +796,13 @@ class TransferMonitorService:
                         for et in enriched_transfers
                         if int(et.get("id") or 0) not in canceled_ids
                     ]
+
+                # Move transfers with an active notification (stalled download / long queued) to the top
+                enriched_transfers.sort(
+                    key=lambda et: 0
+                    if et.get("evaluation", {}).get("notification_active")
+                    else 1
+                )
 
                 self.cached_transfers = enriched_transfers
                 return {

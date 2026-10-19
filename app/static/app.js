@@ -315,7 +315,7 @@ function toggleTransferGroupExpand(groupId) {
 }
 
 function updateTransferGroupButtonsUI() {
-  const modes = ['tracker', 'status', 'protection'];
+  const modes = ['tracker', 'status', 'protection', 'notification'];
   modes.forEach((m) => {
     const btn = document.getElementById(`btn-group-${m}`);
     const dot = document.getElementById(`dot-group-${m}`);
@@ -340,6 +340,7 @@ function updateTransferGroupButtonsUI() {
       tracker: '(Grouped by Tracker — click a group to expand/collapse)',
       status: '(Grouped by Status — click a group to expand/collapse)',
       protection: '(Grouped by Protected / Unprotected — click a group to expand/collapse)',
+      notification: '(Grouped by Notification Status — click a group to expand/collapse)',
     };
     hint.textContent = hintLabels[currentTransferGrouping] || '(Ungrouped)';
   }
@@ -353,6 +354,8 @@ function renderSingleTransferCardHtml(t, hideNames) {
   const downSpeed = Number(t.down_speed || 0);
   const trackersList = t.trackers_list || [{ tracker_id: t.primary_tracker || 'untracked' }];
   const primaryTrackerLabel = getTrackerDisplayName(t.primary_tracker);
+  const isNotified = Boolean(ev.notification_active);
+  const statusUpper = String(t.status || '').toUpperCase();
 
   const trackerBadges = trackersList
     .map((tr) => {
@@ -383,11 +386,34 @@ function renderSingleTransferCardHtml(t, hideNames) {
        </span>`
     : '';
 
+  const notificationBadge = isNotified
+    ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/50">
+         ⚠ ${escapeHtml(ev.notification_label || 'Notified')}
+       </span>`
+    : '';
+
+  const notificationBannerHtml = isNotified
+    ? `<div class="mb-3 px-3 py-2 rounded-lg bg-orange-500/15 border border-orange-500/40 flex flex-wrap items-center justify-between gap-2 text-xs text-orange-200">
+         <div class="flex items-center gap-2 font-semibold">
+           <span class="text-orange-400">⚠ ${escapeHtml(ev.notification_label || 'Transfer Notification')}:</span>
+           <span>${escapeHtml(ev.notification_reason || '')}</span>
+         </div>
+         <span class="px-2 py-0.5 rounded bg-orange-500/20 text-[10px] font-bold uppercase tracking-wider text-orange-300">Pinned to Top</span>
+       </div>`
+    : '';
+
   let ruleProgressHtml = '';
   if (ev.rule_enabled) {
-    const barColor = ev.protection_active ? 'bg-sky-400' : 'bg-amber-500';
+    const isStalledDownloadEval = statusUpper === 'DOWNLOADING' && Boolean(ev.cancel_stalled_download_enabled);
+    const barColor = ev.protection_active
+      ? 'bg-sky-400'
+      : isStalledDownloadEval
+      ? 'bg-orange-500'
+      : 'bg-amber-500';
     const timeLabel = ev.protection_active
       ? `Keep-Alive Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+      : isStalledDownloadEval
+      ? `Stalled Download Cancel Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
       : ev.cancel_on_completed
       ? 'Immediate Cancel on Download Complete'
       : `Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`;
@@ -459,13 +485,18 @@ function renderSingleTransferCardHtml(t, hideNames) {
 
   const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
   const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(t.name)}"`;
+  const cardBorderClasses = isNotified
+    ? 'bg-orange-950/20 border-2 border-orange-500/70 shadow-lg shadow-orange-500/10'
+    : 'bg-slate-900 border border-slate-800 hover:border-slate-700/80';
 
   return `
-    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700/80 transition">
+    <div class="${cardBorderClasses} rounded-xl p-4 transition">
+      ${notificationBannerHtml}
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div class="space-y-1.5 min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
             ${getStatusBadgeHtml(t.status)}
+            ${notificationBadge}
             <h3 class="font-semibold text-sm sm:text-base text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
               ${escapeHtml(t.name)}
             </h3>
@@ -512,13 +543,20 @@ function renderTransfers() {
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
   updateTransferGroupButtonsUI();
 
-  const transfers = (appState.transfers || []).filter((t) => {
-    if (!filter) return true;
-    const nameMatch = String(t.name || '').toLowerCase().includes(filter);
-    const trackerIdMatch = String(t.primary_tracker || '').toLowerCase().includes(filter);
-    const trackerLabelMatch = getTrackerDisplayName(t.primary_tracker).toLowerCase().includes(filter);
-    return nameMatch || trackerIdMatch || trackerLabelMatch;
-  });
+  const transfers = (appState.transfers || [])
+    .filter((t) => {
+      if (!filter) return true;
+      const nameMatch = String(t.name || '').toLowerCase().includes(filter);
+      const trackerIdMatch = String(t.primary_tracker || '').toLowerCase().includes(filter);
+      const trackerLabelMatch = getTrackerDisplayName(t.primary_tracker).toLowerCase().includes(filter);
+      return nameMatch || trackerIdMatch || trackerLabelMatch;
+    })
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.evaluation && b.evaluation.notification_active)) -
+        Number(Boolean(a.evaluation && a.evaluation.notification_active))
+    );
 
   if (!appState.settings?.has_token) {
     container.innerHTML = `
@@ -639,6 +677,31 @@ function renderTransfers() {
         items: unprotectedItems,
       },
     ];
+  } else if (currentTransferGrouping === 'notification') {
+    const notifiedItems = transfers.filter((t) => Boolean(t.evaluation && t.evaluation.notification_active));
+    const normalItems = transfers.filter((t) => !t.evaluation || !t.evaluation.notification_active);
+    groups = [
+      {
+        key: 'notified',
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-orange-500/20 text-orange-300 border border-orange-500/40">⚠ Notified / Highlighted</span>
+            <span class="font-bold text-sm text-white">Stalled Downloads &amp; Long-Queued Alerts</span>
+          </span>`,
+        actionHtml: '',
+        items: notifiedItems,
+      },
+      {
+        key: 'normal',
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">Normal</span>
+            <span class="font-bold text-sm text-white">Transfers Without Active Alerts</span>
+          </span>`,
+        actionHtml: '',
+        items: normalItems,
+      },
+    ];
   }
 
   container.innerHTML = groups
@@ -746,6 +809,21 @@ function renderTrackerCardHtml(r, isDefault = false) {
               ${
                 r.cancel_on_completed
                   ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">Cancel on Complete</span>'
+                  : ''
+              }
+              ${
+                r.cancel_stalled_download_enabled
+                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">Cancel Stalled DL (${escapeHtml(formatDuration(Number(r.cancel_stalled_download_hours || 24) * 3600))})</span>`
+                  : ''
+              }
+              ${
+                r.notify_stalled_download_enabled
+                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">Notify Stalled DL (${escapeHtml(formatDuration(Number(r.notify_stalled_download_hours || 6) * 3600))})</span>`
+                  : ''
+              }
+              ${
+                r.notify_long_queued_enabled
+                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">Notify Queued (${escapeHtml(formatDuration(Number(r.notify_long_queued_hours || 6) * 3600))})</span>`
                   : ''
               }
             </div>
@@ -1001,6 +1079,17 @@ function openRuleModal(trackerId) {
   const enabledChk = document.getElementById('modal-enabled');
   const cancelCompletedFirstScanChk = document.getElementById('modal-cancel-completed-first-scan');
   const cancelOnCompletedChk = document.getElementById('modal-cancel-on-completed');
+
+  const notifyStalledDownloadChk = document.getElementById('modal-notify-stalled-download');
+  const notifyStalledDaysInput = document.getElementById('modal-notify-stalled-days');
+  const notifyStalledHoursInput = document.getElementById('modal-notify-stalled-hours');
+  const cancelStalledDownloadChk = document.getElementById('modal-cancel-stalled-download');
+  const cancelStalledDaysInput = document.getElementById('modal-cancel-stalled-days');
+  const cancelStalledHoursInput = document.getElementById('modal-cancel-stalled-hours');
+  const notifyLongQueuedChk = document.getElementById('modal-notify-long-queued');
+  const notifyQueuedDaysInput = document.getElementById('modal-notify-queued-days');
+  const notifyQueuedHoursInput = document.getElementById('modal-notify-queued-hours');
+
   const useTimeChk = document.getElementById('modal-use-time');
   const hoursInput = document.getElementById('modal-time-hours');
   const minsInput = document.getElementById('modal-time-minutes');
@@ -1014,7 +1103,6 @@ function openRuleModal(trackerId) {
   const keepLargestCountInput = document.getElementById('modal-keep-largest-count');
   const keepAliveDaysInput = document.getElementById('modal-keep-alive-days');
   const keepAliveHoursInput = document.getElementById('modal-keep-alive-hours');
-  const inclDownChk = document.getElementById('modal-include-downloading');
 
   let existing = null;
   if (trackerId === '__default__') {
@@ -1034,6 +1122,22 @@ function openRuleModal(trackerId) {
     enabledChk.checked = Boolean(existing.enabled);
     cancelCompletedFirstScanChk.checked = Boolean(existing.cancel_completed_on_first_scan);
     cancelOnCompletedChk.checked = Boolean(existing.cancel_on_completed);
+
+    notifyStalledDownloadChk.checked = Boolean(existing.notify_stalled_download_enabled);
+    const totalNotifyStalledHours = Number(existing.notify_stalled_download_hours ?? 6);
+    notifyStalledDaysInput.value = Math.floor(totalNotifyStalledHours / 24);
+    notifyStalledHoursInput.value = Math.round(totalNotifyStalledHours % 24);
+
+    cancelStalledDownloadChk.checked = Boolean(existing.cancel_stalled_download_enabled);
+    const totalCancelStalledHours = Number(existing.cancel_stalled_download_hours ?? 24);
+    cancelStalledDaysInput.value = Math.floor(totalCancelStalledHours / 24);
+    cancelStalledHoursInput.value = Math.round(totalCancelStalledHours % 24);
+
+    notifyLongQueuedChk.checked = Boolean(existing.notify_long_queued_enabled);
+    const totalNotifyQueuedHours = Number(existing.notify_long_queued_hours ?? 6);
+    notifyQueuedDaysInput.value = Math.floor(totalNotifyQueuedHours / 24);
+    notifyQueuedHoursInput.value = Math.round(totalNotifyQueuedHours % 24);
+
     useTimeChk.checked = Boolean(existing.use_time_rule);
     const totalMins = Number(existing.max_time_minutes || 0);
     hoursInput.value = Math.floor(totalMins / 60);
@@ -1052,8 +1156,6 @@ function openRuleModal(trackerId) {
     keepAliveDaysInput.value = Math.floor(totalKeepHours / 24);
     keepAliveHoursInput.value = Math.round(totalKeepHours % 24);
 
-    inclDownChk.checked = Boolean(existing.include_downloading);
-
     const opRadios = document.getElementsByName('modal-operator');
     opRadios.forEach((r) => {
       r.checked = r.value === (existing.condition_operator || 'OR');
@@ -1069,6 +1171,17 @@ function openRuleModal(trackerId) {
     enabledChk.checked = true;
     cancelCompletedFirstScanChk.checked = false;
     cancelOnCompletedChk.checked = false;
+
+    notifyStalledDownloadChk.checked = false;
+    notifyStalledDaysInput.value = 0;
+    notifyStalledHoursInput.value = 6;
+    cancelStalledDownloadChk.checked = false;
+    cancelStalledDaysInput.value = 1;
+    cancelStalledHoursInput.value = 0;
+    notifyLongQueuedChk.checked = false;
+    notifyQueuedDaysInput.value = 0;
+    notifyQueuedHoursInput.value = 6;
+
     useTimeChk.checked = true;
     hoursInput.value = 2;
     minsInput.value = 0;
@@ -1082,7 +1195,6 @@ function openRuleModal(trackerId) {
     keepLargestCountInput.value = 3;
     keepAliveDaysInput.value = 3;
     keepAliveHoursInput.value = 0;
-    inclDownChk.checked = false;
     const opRadios = document.getElementsByName('modal-operator');
     opRadios.forEach((r) => {
       r.checked = r.value === 'OR';
@@ -1106,10 +1218,22 @@ function closeRuleModal() {
 
 function updateModalConditionUI() {
   const cancelOnComplete = document.getElementById('modal-cancel-on-completed').checked;
+  const notifyStalledDownload = document.getElementById('modal-notify-stalled-download').checked;
+  const cancelStalledDownload = document.getElementById('modal-cancel-stalled-download').checked;
+  const notifyLongQueued = document.getElementById('modal-notify-long-queued').checked;
   const useTime = document.getElementById('modal-use-time').checked;
   const useRatio = document.getElementById('modal-use-ratio').checked;
   const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
   const keepLargest = document.getElementById('modal-keep-largest').checked;
+
+  const notifyStalledFields = document.getElementById('modal-notify-stalled-fields');
+  if (notifyStalledFields) notifyStalledFields.style.opacity = notifyStalledDownload ? '1' : '0.4';
+
+  const cancelStalledFields = document.getElementById('modal-cancel-stalled-fields');
+  if (cancelStalledFields) cancelStalledFields.style.opacity = cancelStalledDownload ? '1' : '0.4';
+
+  const notifyQueuedFields = document.getElementById('modal-notify-queued-fields');
+  if (notifyQueuedFields) notifyQueuedFields.style.opacity = notifyLongQueued ? '1' : '0.4';
 
   document.getElementById('modal-time-box').style.opacity = cancelOnComplete ? '0.4' : '1';
   document.getElementById('modal-ratio-box').style.opacity = cancelOnComplete ? '0.4' : '1';
@@ -1134,6 +1258,9 @@ async function saveModalRule() {
   const enabled = document.getElementById('modal-enabled').checked;
   const cancelCompletedFirstScan = document.getElementById('modal-cancel-completed-first-scan').checked;
   const cancelOnCompleted = document.getElementById('modal-cancel-on-completed').checked;
+  const notifyStalledDownload = document.getElementById('modal-notify-stalled-download').checked;
+  const cancelStalledDownload = document.getElementById('modal-cancel-stalled-download').checked;
+  const notifyLongQueued = document.getElementById('modal-notify-long-queued').checked;
   const useTime = document.getElementById('modal-use-time').checked;
   const useRatio = document.getElementById('modal-use-ratio').checked;
   const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
@@ -1143,12 +1270,39 @@ async function saveModalRule() {
     enabled &&
     !cancelCompletedFirstScan &&
     !cancelOnCompleted &&
+    !notifyStalledDownload &&
+    !cancelStalledDownload &&
+    !notifyLongQueued &&
     !useTime &&
     !useRatio &&
     !keepTopSeeded &&
     !keepLargest
   ) {
-    showToast('Please enable at least one rule condition.', 'error');
+    showToast('Please enable at least one rule condition or detection option.', 'error');
+    return;
+  }
+
+  const notifyStalledDays = Math.max(0, Number(document.getElementById('modal-notify-stalled-days').value) || 0);
+  const notifyStalledHoursPart = Math.max(0, Number(document.getElementById('modal-notify-stalled-hours').value) || 0);
+  const notifyStalledTotalHours = notifyStalledDays * 24 + notifyStalledHoursPart;
+  if (notifyStalledDownload && notifyStalledTotalHours <= 0) {
+    showToast('Please enter at least 1 hour or day for Notify & Highlight Stalled Downloads.', 'error');
+    return;
+  }
+
+  const cancelStalledDays = Math.max(0, Number(document.getElementById('modal-cancel-stalled-days').value) || 0);
+  const cancelStalledHoursPart = Math.max(0, Number(document.getElementById('modal-cancel-stalled-hours').value) || 0);
+  const cancelStalledTotalHours = cancelStalledDays * 24 + cancelStalledHoursPart;
+  if (cancelStalledDownload && cancelStalledTotalHours <= 0) {
+    showToast('Please enter at least 1 hour or day for Cancel & Delete Stalled Downloads.', 'error');
+    return;
+  }
+
+  const notifyQueuedDays = Math.max(0, Number(document.getElementById('modal-notify-queued-days').value) || 0);
+  const notifyQueuedHoursPart = Math.max(0, Number(document.getElementById('modal-notify-queued-hours').value) || 0);
+  const notifyQueuedTotalHours = notifyQueuedDays * 24 + notifyQueuedHoursPart;
+  if (notifyLongQueued && notifyQueuedTotalHours <= 0) {
+    showToast('Please enter at least 1 hour or day for Notify & Highlight Long-Queued Transfers.', 'error');
     return;
   }
 
@@ -1172,6 +1326,12 @@ async function saveModalRule() {
     enabled,
     cancel_completed_on_first_scan: cancelCompletedFirstScan,
     cancel_on_completed: cancelOnCompleted,
+    notify_stalled_download_enabled: notifyStalledDownload,
+    notify_stalled_download_hours: Math.max(0.5, notifyStalledTotalHours || 6),
+    cancel_stalled_download_enabled: cancelStalledDownload,
+    cancel_stalled_download_hours: Math.max(0.5, cancelStalledTotalHours || 24),
+    notify_long_queued_enabled: notifyLongQueued,
+    notify_long_queued_hours: Math.max(0.5, notifyQueuedTotalHours || 6),
     use_time_rule: useTime,
     max_time_minutes: maxTimeMinutes,
     time_metric: document.getElementById('modal-time-metric').value,
@@ -1184,7 +1344,7 @@ async function saveModalRule() {
     keep_largest_enabled: keepLargest,
     keep_largest_count: Math.max(1, Number(document.getElementById('modal-keep-largest-count').value) || 3),
     keep_alive_hours: keepAliveHours,
-    include_downloading: document.getElementById('modal-include-downloading').checked,
+    include_downloading: false,
   };
 
   try {
@@ -1217,11 +1377,20 @@ async function quickToggleRule(trackerId) {
     enabled: newEnabled,
     cancel_completed_on_first_scan: Boolean(existing.cancel_completed_on_first_scan),
     cancel_on_completed: Boolean(existing.cancel_on_completed),
+    notify_stalled_download_enabled: Boolean(existing.notify_stalled_download_enabled),
+    notify_stalled_download_hours: existing.notify_stalled_download_hours || 6.0,
+    cancel_stalled_download_enabled: Boolean(existing.cancel_stalled_download_enabled),
+    cancel_stalled_download_hours: existing.cancel_stalled_download_hours || 24.0,
+    notify_long_queued_enabled: Boolean(existing.notify_long_queued_enabled),
+    notify_long_queued_hours: existing.notify_long_queued_hours || 6.0,
     use_time_rule:
       existing.use_time_rule ||
       (!existing.use_ratio_rule &&
         !existing.cancel_on_completed &&
         !existing.cancel_completed_on_first_scan &&
+        !existing.notify_stalled_download_enabled &&
+        !existing.cancel_stalled_download_enabled &&
+        !existing.notify_long_queued_enabled &&
         newEnabled),
     max_time_minutes: existing.max_time_minutes,
     time_metric: existing.time_metric || 'seeding_time',

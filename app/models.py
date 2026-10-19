@@ -101,7 +101,36 @@ class TrackerRule(BaseModel):
     )
     include_downloading: bool = Field(
         default=False,
-        description="If True, also evaluate transfers that are still DOWNLOADING/IN_QUEUE (useful when time_metric='total_age'). By default, only SEEDING/COMPLETED transfers are canceled.",
+        description="Legacy flag; superseded by cancel_stalled_download_enabled.",
+    )
+    # Stalled Download Detection (applies to DOWNLOADING transfers only, not queued)
+    notify_stalled_download_enabled: bool = Field(
+        default=False,
+        description="If True, highlight and move DOWNLOADING transfers to the top of the transfer list after notify_stalled_download_hours.",
+    )
+    notify_stalled_download_hours: float = Field(
+        default=6.0,
+        ge=0.1,
+        description="Hours (days * 24 + hours) after which a DOWNLOADING transfer is highlighted at the top.",
+    )
+    cancel_stalled_download_enabled: bool = Field(
+        default=False,
+        description="If True, evaluate and cancel/delete DOWNLOADING transfers after cancel_stalled_download_hours.",
+    )
+    cancel_stalled_download_hours: float = Field(
+        default=24.0,
+        ge=0.1,
+        description="Hours (days * 24 + hours) after which a DOWNLOADING transfer is canceled and removed.",
+    )
+    # Queued Transfer Notification (applies to IN_QUEUE / WAITING transfers)
+    notify_long_queued_enabled: bool = Field(
+        default=False,
+        description="If True, highlight and move IN_QUEUE / WAITING transfers to the top of the transfer list after notify_long_queued_hours.",
+    )
+    notify_long_queued_hours: float = Field(
+        default=6.0,
+        ge=0.1,
+        description="Hours (days * 24 + hours) after which a queued transfer is highlighted at the top.",
     )
     # Discovery metadata
     discovered_from_transfers: bool = Field(
@@ -229,3 +258,9 @@ class TrackerRuleUpdateRequest(BaseModel):
     keep_largest_count: int = Field(default=3, ge=1, le=500)
     keep_alive_hours: float = Field(default=72.0, ge=0.1)
     include_downloading: bool = False
+    notify_stalled_download_enabled: bool = False
+    notify_stalled_download_hours: float = Field(default=6.0, ge=0.1)
+    cancel_stalled_download_enabled: bool = False
+    cancel_stalled_download_hours: float = Field(default=24.0, ge=0.1)
+    notify_long_queued_enabled: bool = False
+    notify_long_queued_hours: float = Field(default=6.0, ge=0.1)

@@ -258,6 +258,16 @@
             <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-protection"></span>
             <span>Protected / Unprotected</span>
           </button>
+          <button
+            type="button"
+            id="btn-group-notification"
+            onclick="toggleTransferGroupBy('notification')"
+            aria-pressed="false"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+          >
+            <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-group-notification"></span>
+            <span>Notification Status</span>
+          </button>
         </div>
       </div>
 
@@ -595,6 +605,127 @@
           <input type="checkbox" id="modal-cancel-on-completed" onchange="updateModalConditionUI()" class="w-4 h-4 accent-rose-500" />
         </label>
 
+        <!-- Stalled Downloads Detection (Applies to DOWNLOADING Transfers Only, Not Queued) -->
+        <div class="p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/30 space-y-3">
+          <div>
+            <div class="text-sm font-semibold text-orange-300">Stalled Downloads Detection (<code class="text-xs">DOWNLOADING</code> Only)</div>
+            <div class="text-xs text-orange-200/70 mt-0.5">
+              Detect transfers stuck in <code class="text-orange-200">DOWNLOADING</code> state (does not apply to <code class="text-orange-200">IN_QUEUE</code> transfers). Choose whether to highlight/notify at the top of the transfer page and/or automatically cancel &amp; delete them.
+            </div>
+          </div>
+
+          <!-- Option A: Notify / Highlight Stalled Downloads -->
+          <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2.5">
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <div class="text-xs font-semibold text-orange-200">Notify &amp; Highlight Stalled Downloads</div>
+                <div class="text-[11px] text-slate-400">Move <code class="text-slate-300">DOWNLOADING</code> transfers to the top of the transfers list and highlight them after:</div>
+              </div>
+              <input type="checkbox" id="modal-notify-stalled-download" onchange="updateModalConditionUI()" class="w-4 h-4 accent-orange-400 shrink-0" />
+            </label>
+            <div id="modal-notify-stalled-fields" class="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1">Days</label>
+                <input
+                  type="number"
+                  id="modal-notify-stalled-days"
+                  min="0"
+                  max="365"
+                  step="1"
+                  value="0"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-orange-400"
+                />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1">Hours</label>
+                <input
+                  type="number"
+                  id="modal-notify-stalled-hours"
+                  min="0"
+                  max="999"
+                  step="1"
+                  value="6"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-orange-400"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Option B: Cancel / Delete Stalled Downloads -->
+          <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2.5">
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <div class="text-xs font-semibold text-orange-300">Cancel &amp; Delete Stalled Downloads</div>
+                <div class="text-[11px] text-slate-400">Automatically evaluate, cancel, and remove <code class="text-slate-300">DOWNLOADING</code> transfers after:</div>
+              </div>
+              <input type="checkbox" id="modal-cancel-stalled-download" onchange="updateModalConditionUI()" class="w-4 h-4 accent-orange-500 shrink-0" />
+            </label>
+            <div id="modal-cancel-stalled-fields" class="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1">Days</label>
+                <input
+                  type="number"
+                  id="modal-cancel-stalled-days"
+                  min="0"
+                  max="365"
+                  step="1"
+                  value="1"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-orange-400"
+                />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400 mb-1">Hours</label>
+                <input
+                  type="number"
+                  id="modal-cancel-stalled-hours"
+                  min="0"
+                  max="999"
+                  step="1"
+                  value="0"
+                  class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-orange-400"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Notify Long-Queued Transfers (Applies to IN_QUEUE / WAITING Transfers) -->
+        <div class="p-3.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 space-y-2.5">
+          <label class="flex items-center justify-between gap-3 cursor-pointer">
+            <div>
+              <div class="text-sm font-semibold text-yellow-300">Notify &amp; Highlight Long-Queued Transfers (<code class="text-xs">IN_QUEUE</code>)</div>
+              <div class="text-xs text-yellow-200/70">Move queued transfers to the top of the transfer page and highlight them if queued for more than:</div>
+            </div>
+            <input type="checkbox" id="modal-notify-long-queued" onchange="updateModalConditionUI()" class="w-4 h-4 accent-yellow-400 shrink-0" />
+          </label>
+          <div id="modal-notify-queued-fields" class="grid grid-cols-2 gap-3 pt-1">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Days</label>
+              <input
+                type="number"
+                id="modal-notify-queued-days"
+                min="0"
+                max="365"
+                step="1"
+                value="0"
+                class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-yellow-400"
+              />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">Hours</label>
+              <input
+                type="number"
+                id="modal-notify-queued-hours"
+                min="0"
+                max="999"
+                step="1"
+                value="6"
+                class="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-yellow-400"
+              />
+            </div>
+          </div>
+        </div>
+
         <!-- Time Threshold Box -->
         <div id="modal-time-box" class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
           <label class="flex items-center justify-between cursor-pointer">
@@ -777,15 +908,6 @@
             </div>
           </div>
         </div>
-
-        <!-- Advanced Status Option -->
-        <label class="flex items-center justify-between p-3 rounded-lg bg-slate-950 border border-slate-800 cursor-pointer">
-          <div>
-            <div class="text-xs font-medium text-slate-200">Also apply rule while Downloading / Queued</div>
-            <div class="text-[11px] text-slate-500">By default, only SEEDING / COMPLETED transfers are canceled</div>
-          </div>
-          <input type="checkbox" id="modal-include-downloading" class="w-4 h-4 accent-amber-500" />
-        </label>
       </div>
 
       <!-- Always-Visible Footer -->

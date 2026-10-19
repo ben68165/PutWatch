@@ -311,6 +311,9 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         and not req.use_ratio_rule
         and not req.keep_top_seeded_enabled
         and not req.keep_largest_enabled
+        and not req.notify_stalled_download_enabled
+        and not req.cancel_stalled_download_enabled
+        and not req.notify_long_queued_enabled
     ):
         raise HTTPException(
             status_code=400,
@@ -348,6 +351,12 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         keep_largest_count=req.keep_largest_count,
         keep_alive_hours=req.keep_alive_hours,
         include_downloading=req.include_downloading,
+        notify_stalled_download_enabled=req.notify_stalled_download_enabled,
+        notify_stalled_download_hours=req.notify_stalled_download_hours,
+        cancel_stalled_download_enabled=req.cancel_stalled_download_enabled,
+        cancel_stalled_download_hours=req.cancel_stalled_download_hours,
+        notify_long_queued_enabled=req.notify_long_queued_enabled,
+        notify_long_queued_hours=req.notify_long_queued_hours,
         discovered_from_transfers=(
             existing.discovered_from_transfers if existing else False
         ),
