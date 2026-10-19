@@ -14,6 +14,153 @@ let expandedTransferGroups = new Set();
 let isTransfersHeaderCompact = false;
 let oobPollTimer = null;
 
+function getStoredSort(key, defaultVal) {
+  try {
+    return localStorage.getItem(key) || defaultVal;
+  } catch (_e) {
+    return defaultVal;
+  }
+}
+
+function setStoredSort(key, val) {
+  try {
+    localStorage.setItem(key, val);
+  } catch (_e) {
+    // ignore
+  }
+}
+
+let currentTransferSort = getStoredSort('putwatch_transfer_sort', 'created_at');
+let transferSortDirection = getStoredSort('putwatch_transfer_sort_dir', 'desc');
+
+let currentLogSort = getStoredSort('putwatch_log_sort', 'timestamp');
+let logSortDirection = getStoredSort('putwatch_log_sort_dir', 'desc');
+
+function parseTimestamp(ts) {
+  if (!ts) return 0;
+  const d = new Date(ts).getTime();
+  return isNaN(d) ? 0 : d;
+}
+
+function updateTransferSortUI() {
+  const select = document.getElementById('transfer-sort-by');
+  if (select && select.value !== currentTransferSort) {
+    select.value = currentTransferSort;
+  }
+  const btnLabel = document.getElementById('label-transfer-sort-order');
+  if (btnLabel) {
+    btnLabel.innerHTML = transferSortDirection === 'asc' ? '&uarr; Asc' : '&darr; Desc';
+  }
+  const btn = document.getElementById('btn-transfer-sort-order');
+  if (btn) {
+    btn.title = transferSortDirection === 'asc'
+      ? 'Sort Ascending (Click to switch to Descending)'
+      : 'Sort Descending (Click to switch to Ascending)';
+  }
+}
+
+function setTransferSort(sortBy) {
+  currentTransferSort = sortBy;
+  setStoredSort('putwatch_transfer_sort', currentTransferSort);
+  updateTransferSortUI();
+  renderTransfers();
+}
+
+function toggleTransferSortOrder() {
+  transferSortDirection = transferSortDirection === 'asc' ? 'desc' : 'asc';
+  setStoredSort('putwatch_transfer_sort_dir', transferSortDirection);
+  updateTransferSortUI();
+  renderTransfers();
+}
+
+function updateLogSortUI() {
+  const select = document.getElementById('log-sort-by');
+  if (select && select.value !== currentLogSort) {
+    select.value = currentLogSort;
+  }
+  const btnLabel = document.getElementById('label-log-sort-order');
+  if (btnLabel) {
+    btnLabel.innerHTML = logSortDirection === 'asc' ? '&uarr; Asc' : '&darr; Desc';
+  }
+  const btn = document.getElementById('btn-log-sort-order');
+  if (btn) {
+    btn.title = logSortDirection === 'asc'
+      ? 'Sort Ascending (Click to switch to Descending)'
+      : 'Sort Descending (Click to switch to Ascending)';
+  }
+
+  const headerMap = {
+    'icon-th-log-time': 'timestamp',
+    'icon-th-log-name': 'transfer_name',
+    'icon-th-log-tracker': 'tracker_id',
+    'icon-th-log-metrics': ['ratio_at_cancel', 'seeding_seconds'],
+    'icon-th-log-reason': 'reason',
+  };
+
+  const arrow = logSortDirection === 'asc' ? '↑' : '↓';
+
+  Object.entries(headerMap).forEach(([iconId, field]) => {
+    const el = document.getElementById(iconId);
+    if (!el) return;
+    const isActive = Array.isArray(field) ? field.includes(currentLogSort) : currentLogSort === field;
+    if (isActive) {
+      el.textContent = arrow;
+      el.className = 'text-xs font-mono text-amber-400 font-bold';
+    } else {
+      el.textContent = '↕';
+      el.className = 'text-xs font-mono text-slate-600';
+    }
+  });
+}
+
+function setLogSort(sortBy) {
+  currentLogSort = sortBy;
+  setStoredSort('putwatch_log_sort', currentLogSort);
+  updateLogSortUI();
+  renderLogs();
+}
+
+function toggleLogSortOrder() {
+  logSortDirection = logSortDirection === 'asc' ? 'desc' : 'asc';
+  setStoredSort('putwatch_log_sort_dir', logSortDirection);
+  updateLogSortUI();
+  renderLogs();
+}
+
+function setLogSortHeader(colKey) {
+  if (colKey === 'metrics') {
+    if (currentLogSort !== 'ratio_at_cancel' && currentLogSort !== 'seeding_seconds') {
+      currentLogSort = 'ratio_at_cancel';
+      logSortDirection = 'desc';
+    } else if (currentLogSort === 'ratio_at_cancel') {
+      if (logSortDirection === 'desc') {
+        logSortDirection = 'asc';
+      } else {
+        currentLogSort = 'seeding_seconds';
+        logSortDirection = 'desc';
+      }
+    } else {
+      if (logSortDirection === 'desc') {
+        logSortDirection = 'asc';
+      } else {
+        currentLogSort = 'ratio_at_cancel';
+        logSortDirection = 'desc';
+      }
+    }
+  } else {
+    if (currentLogSort === colKey) {
+      logSortDirection = logSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      currentLogSort = colKey;
+      logSortDirection = (colKey === 'transfer_name' || colKey === 'tracker_id') ? 'asc' : 'desc';
+    }
+  }
+  setStoredSort('putwatch_log_sort', currentLogSort);
+  setStoredSort('putwatch_log_sort_dir', logSortDirection);
+  updateLogSortUI();
+  renderLogs();
+}
+
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
   return String(str)
@@ -439,10 +586,16 @@ function updateUI(state) {
   document.getElementById('badge-trackers-count').textContent = trackers.length;
   document.getElementById('badge-logs-count').textContent = logs.length;
 
-  const thLogTime = document.getElementById('th-log-time');
-  if (thLogTime) {
-    thLogTime.textContent = `Date & Time (${tz})`;
+  const labelThLogTime = document.getElementById('label-th-log-time');
+  if (labelThLogTime) {
+    labelThLogTime.textContent = `Date & Time (${tz})`;
+  } else {
+    const thLogTime = document.getElementById('th-log-time');
+    if (thLogTime) thLogTime.textContent = `Date & Time (${tz})`;
   }
+
+  updateTransferSortUI();
+  updateLogSortUI();
 
   // Service status badge
   const statusBadge = document.getElementById('service-status-badge');
@@ -808,6 +961,53 @@ function renderTransfers() {
   const filter = rawSearchVal.trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
   updateTransferGroupButtonsUI();
+  updateTransferSortUI();
+
+  function compareTransfers(a, b) {
+    const notifA = Boolean(a.evaluation && a.evaluation.notification_active);
+    const notifB = Boolean(b.evaluation && b.evaluation.notification_active);
+    if (notifA !== notifB) {
+      return notifB ? 1 : -1;
+    }
+
+    let valA, valB, isString = false;
+    switch (currentTransferSort) {
+      case 'size':
+        valA = Number(a.size || 0);
+        valB = Number(b.size || 0);
+        break;
+      case 'current_ratio':
+        valA = Number(a.current_ratio || 0);
+        valB = Number(b.current_ratio || 0);
+        break;
+      case 'seconds_seeding':
+        valA = Number(a.seconds_seeding || 0);
+        valB = Number(b.seconds_seeding || 0);
+        break;
+      case 'up_speed':
+        valA = Number(a.up_speed || 0);
+        valB = Number(b.up_speed || 0);
+        break;
+      case 'name':
+        valA = String(a.name || '').toLowerCase();
+        valB = String(b.name || '').toLowerCase();
+        isString = true;
+        break;
+      case 'created_at':
+      default:
+        valA = parseTimestamp(a.created_at);
+        valB = parseTimestamp(b.created_at);
+        break;
+    }
+
+    let cmp = 0;
+    if (isString) {
+      cmp = valA.localeCompare(valB);
+    } else {
+      cmp = valA - valB;
+    }
+    return transferSortDirection === 'desc' ? -cmp : cmp;
+  }
 
   const transfers = (appState.transfers || [])
     .filter((t) => {
@@ -818,11 +1018,7 @@ function renderTransfers() {
       return nameMatch || trackerIdMatch || trackerLabelMatch;
     })
     .slice()
-    .sort(
-      (a, b) =>
-        Number(Boolean(b.evaluation && b.evaluation.notification_active)) -
-        Number(Boolean(a.evaluation && a.evaluation.notification_active))
-    );
+    .sort(compareTransfers);
 
   if (!appState.settings?.has_token) {
     container.innerHTML = `
@@ -1268,17 +1464,63 @@ function renderLogs() {
 
   const filter = rawLogSearch.trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
+  updateLogSortUI();
 
-  const logs = allLogs.filter((entry) => {
-    if (!filter) return true;
-    const nameMatch = String(entry.transfer_name || '').toLowerCase().includes(filter);
-    const trackerIdMatch = String(entry.tracker_id || '').toLowerCase().includes(filter);
-    const trackerLabelMatch = getTrackerDisplayName(entry.tracker_id).toLowerCase().includes(filter);
-    const reasonMatch = String(entry.reason || '').toLowerCase().includes(filter);
-    const ruleMatch = String(entry.rule_summary || '').toLowerCase().includes(filter);
-    const statusMatch = String(entry.status_at_cancel || '').toLowerCase().includes(filter);
-    return nameMatch || trackerIdMatch || trackerLabelMatch || reasonMatch || ruleMatch || statusMatch;
-  });
+  function compareLogs(a, b) {
+    let valA, valB, isString = false;
+    switch (currentLogSort) {
+      case 'transfer_name':
+        valA = String(a.transfer_name || '').toLowerCase();
+        valB = String(b.transfer_name || '').toLowerCase();
+        isString = true;
+        break;
+      case 'tracker_id':
+        valA = getTrackerDisplayName(a.tracker_id).toLowerCase();
+        valB = getTrackerDisplayName(b.tracker_id).toLowerCase();
+        isString = true;
+        break;
+      case 'ratio_at_cancel':
+        valA = Number(a.ratio_at_cancel || 0);
+        valB = Number(b.ratio_at_cancel || 0);
+        break;
+      case 'seeding_seconds':
+        valA = Number(a.seeding_seconds || 0);
+        valB = Number(b.seeding_seconds || 0);
+        break;
+      case 'reason':
+        valA = String(a.reason || '').toLowerCase();
+        valB = String(b.reason || '').toLowerCase();
+        isString = true;
+        break;
+      case 'timestamp':
+      default:
+        valA = parseTimestamp(a.timestamp);
+        valB = parseTimestamp(b.timestamp);
+        break;
+    }
+
+    let cmp = 0;
+    if (isString) {
+      cmp = valA.localeCompare(valB);
+    } else {
+      cmp = valA - valB;
+    }
+    return logSortDirection === 'desc' ? -cmp : cmp;
+  }
+
+  const logs = allLogs
+    .filter((entry) => {
+      if (!filter) return true;
+      const nameMatch = String(entry.transfer_name || '').toLowerCase().includes(filter);
+      const trackerIdMatch = String(entry.tracker_id || '').toLowerCase().includes(filter);
+      const trackerLabelMatch = getTrackerDisplayName(entry.tracker_id).toLowerCase().includes(filter);
+      const reasonMatch = String(entry.reason || '').toLowerCase().includes(filter);
+      const ruleMatch = String(entry.rule_summary || '').toLowerCase().includes(filter);
+      const statusMatch = String(entry.status_at_cancel || '').toLowerCase().includes(filter);
+      return nameMatch || trackerIdMatch || trackerLabelMatch || reasonMatch || ruleMatch || statusMatch;
+    })
+    .slice()
+    .sort(compareLogs);
 
   if (logs.length === 0) {
     tbody.innerHTML = `

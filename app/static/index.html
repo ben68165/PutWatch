@@ -203,6 +203,32 @@
                   </svg>
                 </button>
               </div>
+              <!-- Transfer Sort Controls -->
+              <div class="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider hidden sm:inline">Sort:</span>
+                <select
+                  id="transfer-sort-by"
+                  onchange="setTransferSort(this.value)"
+                  class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer pr-1"
+                  title="Sort transfers by"
+                >
+                  <option value="created_at" class="bg-slate-900 text-slate-200">Date Added</option>
+                  <option value="size" class="bg-slate-900 text-slate-200">File Size</option>
+                  <option value="current_ratio" class="bg-slate-900 text-slate-200">Share Ratio</option>
+                  <option value="seconds_seeding" class="bg-slate-900 text-slate-200">Seeding Time</option>
+                  <option value="up_speed" class="bg-slate-900 text-slate-200">Upload Speed</option>
+                  <option value="name" class="bg-slate-900 text-slate-200">Name</option>
+                </select>
+                <button
+                  type="button"
+                  id="btn-transfer-sort-order"
+                  onclick="toggleTransferSortOrder()"
+                  title="Toggle Ascending / Descending"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono font-semibold text-amber-400 hover:bg-slate-800 transition cursor-pointer select-none"
+                >
+                  <span id="label-transfer-sort-order">&darr; Desc</span>
+                </button>
+              </div>
               <button
                 onclick="switchTab('trackers')"
                 class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 whitespace-nowrap cursor-pointer transition"
@@ -398,6 +424,32 @@
                   </svg>
                 </button>
               </div>
+              <!-- Log Sort Controls -->
+              <div class="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider hidden sm:inline">Sort:</span>
+                <select
+                  id="log-sort-by"
+                  onchange="setLogSort(this.value)"
+                  class="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer pr-1"
+                  title="Sort cancellation logs by"
+                >
+                  <option value="timestamp" class="bg-slate-900 text-slate-200">Date Canceled</option>
+                  <option value="transfer_name" class="bg-slate-900 text-slate-200">Transfer Name</option>
+                  <option value="tracker_id" class="bg-slate-900 text-slate-200">Tracker</option>
+                  <option value="ratio_at_cancel" class="bg-slate-900 text-slate-200">Share Ratio</option>
+                  <option value="seeding_seconds" class="bg-slate-900 text-slate-200">Seeding Time</option>
+                  <option value="reason" class="bg-slate-900 text-slate-200">Reason</option>
+                </select>
+                <button
+                  type="button"
+                  id="btn-log-sort-order"
+                  onclick="toggleLogSortOrder()"
+                  title="Toggle Ascending / Descending"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono font-semibold text-amber-400 hover:bg-slate-800 transition cursor-pointer select-none"
+                >
+                  <span id="label-log-sort-order">&darr; Desc</span>
+                </button>
+              </div>
               <button
                 onclick="clearLogs()"
                 class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/60 hover:text-red-300 border border-slate-700 text-xs font-medium text-slate-300 shrink-0 cursor-pointer transition"
@@ -449,11 +501,36 @@
           <table class="w-full text-left border-collapse">
             <thead>
               <tr class="border-b border-slate-800 text-xs uppercase text-slate-400 bg-slate-950/50">
-                <th id="th-log-time" class="py-3 px-4">Date &amp; Time</th>
-                <th class="py-3 px-4">Transfer</th>
-                <th class="py-3 px-4">Tracker</th>
-                <th class="py-3 px-4">Metrics at Cancel</th>
-                <th class="py-3 px-4">Triggered Rule &amp; Reason</th>
+                <th id="th-log-time" onclick="setLogSortHeader('timestamp')" class="py-3 px-4 cursor-pointer hover:text-white select-none transition" title="Sort by Date &amp; Time">
+                  <div class="flex items-center gap-1.5">
+                    <span id="label-th-log-time">Date &amp; Time</span>
+                    <span id="icon-th-log-time" class="text-xs font-mono text-amber-400 font-bold">&darr;</span>
+                  </div>
+                </th>
+                <th onclick="setLogSortHeader('transfer_name')" class="py-3 px-4 cursor-pointer hover:text-white select-none transition" title="Sort by Transfer Name">
+                  <div class="flex items-center gap-1.5">
+                    <span>Transfer</span>
+                    <span id="icon-th-log-name" class="text-xs font-mono text-slate-600">&updownarrow;</span>
+                  </div>
+                </th>
+                <th onclick="setLogSortHeader('tracker_id')" class="py-3 px-4 cursor-pointer hover:text-white select-none transition" title="Sort by Tracker">
+                  <div class="flex items-center gap-1.5">
+                    <span>Tracker</span>
+                    <span id="icon-th-log-tracker" class="text-xs font-mono text-slate-600">&updownarrow;</span>
+                  </div>
+                </th>
+                <th onclick="setLogSortHeader('metrics')" class="py-3 px-4 cursor-pointer hover:text-white select-none transition" title="Sort by Share Ratio / Seeding Time">
+                  <div class="flex items-center gap-1.5">
+                    <span>Metrics at Cancel</span>
+                    <span id="icon-th-log-metrics" class="text-xs font-mono text-slate-600">&updownarrow;</span>
+                  </div>
+                </th>
+                <th onclick="setLogSortHeader('reason')" class="py-3 px-4 cursor-pointer hover:text-white select-none transition" title="Sort by Triggered Reason">
+                  <div class="flex items-center gap-1.5">
+                    <span>Triggered Rule &amp; Reason</span>
+                    <span id="icon-th-log-reason" class="text-xs font-mono text-slate-600">&updownarrow;</span>
+                  </div>
+                </th>
                 <th class="py-3 px-4">Result</th>
               </tr>
             </thead>
