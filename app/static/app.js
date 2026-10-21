@@ -584,7 +584,6 @@ function updateUI(state) {
   const transfers = state.transfers || [];
   const trackers = state.trackers || [];
   const logs = state.activity_log || [];
-  const tz = s.timezone || 'Europe/Berlin';
 
   // Sync privacy toggle switches across Active Transfers and Cancellation Log tabs
   syncPrivacyTogglesUI(Boolean(s.hide_transfer_names));
@@ -594,14 +593,6 @@ function updateUI(state) {
   document.getElementById('badge-transfers-count').textContent = transfers.length;
   document.getElementById('badge-trackers-count').textContent = trackers.length;
   document.getElementById('badge-logs-count').textContent = logs.length;
-
-  const labelThLogTime = document.getElementById('label-th-log-time');
-  if (labelThLogTime) {
-    labelThLogTime.textContent = `Date & Time (${tz})`;
-  } else {
-    const thLogTime = document.getElementById('th-log-time');
-    if (thLogTime) thLogTime.textContent = `Date & Time (${tz})`;
-  }
 
   updateTransferSortUI();
   updateLogSortUI();
