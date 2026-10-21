@@ -69,7 +69,7 @@ def describe_rule(rule: TrackerRule) -> str:
     base_str = joiner.join(parts) if parts else "Active Rule"
 
     if rule.cancel_completed_on_first_scan and not rule.cancel_on_completed:
-        base_str += " + Instant COMPLETED"
+        base_str += " + Cancel COMPLETED"
     if rule.cancel_stalled_download_enabled:
         base_str += f" + Stalled DL >= {format_duration(rule.cancel_stalled_download_hours * 3600)}"
     if rule.notify_stalled_download_enabled:
@@ -148,12 +148,9 @@ def compute_keep_alive_protections(
         st = str(t.get("status") or "").upper()
         if st not in ("SEEDING", "COMPLETED", "COMPLETING"):
             continue
-        # If cancel_completed_on_first_scan is active and this transfer was already COMPLETED on first scan,
-        # do not protect it so it can be canceled immediately.
-        first_st = (
-            first_seen_status_map.get(tid, st) if first_seen_status_map else st
-        )
-        if rule.cancel_completed_on_first_scan and st == "COMPLETED" and first_st == "COMPLETED":
+        # If cancel_completed_on_first_scan is active, every COMPLETED transfer (instantly completed or
+        # switched to COMPLETED later) is canceled immediately, so it must never claim a keep-alive slot.
+        if rule.cancel_completed_on_first_scan and st == "COMPLETED":
             continue
         seeding_pool.append(t)
 
@@ -213,7 +210,8 @@ def evaluate_transfer_against_rule(
 ) -> Dict[str, Any]:
     """
     Evaluate a single Put.io transfer dict against a TrackerRule, factoring in:
-      - Immediate cancellation if already COMPLETED on first scan (`cancel_completed_on_first_scan`)
+      - Immediate cancellation of any COMPLETED transfer, whether it was already COMPLETED on first scan or
+        switched to COMPLETED later (`cancel_completed_on_first_scan`)
       - Immediate cancellation upon download completion (`cancel_on_completed`)
       - Stalled download notification & auto-cancellation (`notify_stalled_download_enabled`, `cancel_stalled_download_enabled`) for DOWNLOADING transfers only
       - Long-queued transfer notification (`notify_long_queued_enabled`) for IN_QUEUE / WAITING transfers
@@ -262,12 +260,15 @@ def evaluate_transfer_against_rule(
             "target_ratio": None,
         }
 
-    # Check if this transfer was already COMPLETED when first scanned (instant/cached transfer on Put.io)
-    if (
-        rule.cancel_completed_on_first_scan
-        and status == "COMPLETED"
-        and was_completed_on_first_scan
-    ):
+    # COMPLETED transfers never seed (seconds_seeding / ratio stay at 0), so time and ratio rules could
+    # never fire for them. Cancel them right away, both when they were already COMPLETED on the first scan
+    # (instant/cached transfer on Put.io) and when they switched to COMPLETED afterwards.
+    if rule.cancel_completed_on_first_scan and status == "COMPLETED":
+        completed_reason = (
+            "Already COMPLETED on first scan (instant/cached transfer on Put.io)"
+            if was_completed_on_first_scan
+            else "Status switched to COMPLETED (download finished, not seeding)"
+        )
         return {
             "rule_enabled": True,
             "rule_id": rule.tracker_id,
@@ -279,7 +280,7 @@ def evaluate_transfer_against_rule(
             "use_ratio_rule": False,
             "eligible_status": True,
             "should_cancel": True,
-            "reason": "Already COMPLETED on first scan (instant/cached transfer on Put.io)",
+            "reason": completed_reason,
             "protection_label": None,
             "protection_active": False,
             "notification_active": False,
@@ -540,6 +541,17 @@ class TransferMonitorService:
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             cfg = self.store.get()
+            try:
+                removed_logs = self.store.prune_logs(cfg.log_retention_days)
+                if removed_logs:
+                    logger.info(
+                        "Auto-deleted %d cancellation log entr%s older than %d day(s).",
+                        removed_logs,
+                        "y" if removed_logs == 1 else "ies",
+                        cfg.log_retention_days,
+                    )
+            except Exception as exc:
+                logger.exception("Failed to prune cancellation log: %s", exc)
             if cfg.putio_token:
                 try:
                     await self.poll_once(execute_cancellations=cfg.monitoring_enabled)

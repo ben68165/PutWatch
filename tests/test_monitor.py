@@ -219,6 +219,116 @@ class TestTrackerMonitor(unittest.TestCase):
         )
         self.assertFalse(ev_seeding["should_cancel"])
 
+    def test_transfer_switching_to_completed_later_is_canceled(self) -> None:
+        from app.monitor import compute_keep_alive_protections
+
+        rule = TrackerRule(
+            tracker_id="tracker.later.org",
+            enabled=True,
+            cancel_completed_on_first_scan=True,
+            use_time_rule=True,
+            max_time_minutes=2880.0,
+            use_ratio_rule=True,
+            max_ratio=2.0,
+            keep_top_seeded_enabled=True,
+            keep_top_seeded_count=1,
+        )
+        # Started as DOWNLOADING, finished soon after and is now COMPLETED (never seeded):
+        # seconds_seeding and ratio stay at 0, so time/ratio limits could never trigger.
+        t_done = {
+            "id": 20,
+            "name": "Finished.Quickly",
+            "status": "COMPLETED",
+            "up_speed": 0,
+            "uploaded": 0,
+            "size": 1000,
+            "seconds_seeding": 0,
+            "current_ratio": 0.0,
+        }
+        t_seeding = {
+            "id": 21,
+            "name": "Still.Seeding",
+            "status": "SEEDING",
+            "up_speed": 10,
+            "uploaded": 10,
+            "size": 1000,
+            "seconds_seeding": 30,
+            "current_ratio": 0.1,
+        }
+
+        protections = compute_keep_alive_protections(
+            [t_done, t_seeding], rule, {20: "DOWNLOADING", 21: "DOWNLOADING"}
+        )
+        self.assertNotIn(20, protections)
+
+        ev_done = evaluate_transfer_against_rule(
+            t_done, rule, protections.get(20), was_completed_on_first_scan=False
+        )
+        self.assertTrue(ev_done["should_cancel"])
+        self.assertIn("switched to COMPLETED", ev_done["reason"])
+
+        # A transfer that is still seeding keeps following the normal time/ratio limits
+        ev_seeding = evaluate_transfer_against_rule(
+            t_seeding, rule, protections.get(21), was_completed_on_first_scan=False
+        )
+        self.assertFalse(ev_seeding["should_cancel"])
+
+        # Without the option enabled the COMPLETED transfer is left to the regular limits
+        rule_off = rule.model_copy(update={"cancel_completed_on_first_scan": False})
+        ev_off = evaluate_transfer_against_rule(
+            t_done, rule_off, None, was_completed_on_first_scan=False
+        )
+        self.assertFalse(ev_off["should_cancel"])
+
+    def test_log_retention_prunes_old_entries(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import ActivityLogEntry
+
+        def make_entry(entry_id: str, age_days: float, ts_override: str | None = None):
+            ts = ts_override or (
+                datetime.now(timezone.utc) - timedelta(days=age_days)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return ActivityLogEntry(
+                id=entry_id,
+                timestamp=ts,
+                transfer_id=1,
+                transfer_name=f"t-{entry_id}",
+                tracker_id="tracker.a.org",
+                status_at_cancel="COMPLETED",
+                seeding_seconds=0,
+                ratio_at_cancel=0.0,
+                rule_summary="rule",
+                reason="reason",
+            )
+
+        self.assertEqual(AppConfig().log_retention_days, 7)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ConfigStore(path=Path(tmp) / "config.json")
+            store.append_log(make_entry("old", 8))
+            store.append_log(make_entry("fresh", 1))
+            store.append_log(make_entry("edge", 6.9))
+            store.append_log(make_entry("broken", 0, ts_override="not-a-date"))
+
+            # 0 days = keep forever
+            self.assertEqual(store.prune_logs(0), 0)
+            self.assertEqual(len(store.get().activity_log), 4)
+
+            self.assertEqual(store.prune_logs(7), 1)
+            remaining = {e.id for e in store.get().activity_log}
+            self.assertEqual(remaining, {"fresh", "edge", "broken"})
+
+            # Persisted to disk
+            reloaded = ConfigStore(path=Path(tmp) / "config.json")
+            self.assertEqual({e.id for e in reloaded.get().activity_log}, remaining)
+
+            # Shorter retention removes more
+            self.assertEqual(store.prune_logs(3), 1)
+            self.assertEqual(
+                {e.id for e in store.get().activity_log}, {"fresh", "broken"}
+            )
+
     def test_stalled_download_and_long_queued_detection(self) -> None:
         from datetime import datetime, timedelta, timezone
 
@@ -372,6 +482,7 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
             state_json = r_state.json()
             self.assertIn("trackers", state_json)
             self.assertIn("pin_transfers_header", state_json["settings"])
+            self.assertIn("log_retention_days", state_json["settings"])
 
             r_update = await client.put(
                 "/api/settings", json={"pin_transfers_header": False}
@@ -384,6 +495,22 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(r_restore.status_code, 200)
             self.assertTrue(r_restore.json()["settings"]["pin_transfers_header"])
+
+            r_retention = await client.put(
+                "/api/settings", json={"log_retention_days": 14}
+            )
+            self.assertEqual(r_retention.status_code, 200)
+            self.assertEqual(r_retention.json()["settings"]["log_retention_days"], 14)
+            r_retention_default = await client.put(
+                "/api/settings", json={"log_retention_days": 7}
+            )
+            self.assertEqual(
+                r_retention_default.json()["settings"]["log_retention_days"], 7
+            )
+            r_retention_bad = await client.put(
+                "/api/settings", json={"log_retention_days": -1}
+            )
+            self.assertEqual(r_retention_bad.status_code, 422)
 
             r_index = await client.get("/")
             self.assertEqual(r_index.status_code, 200)

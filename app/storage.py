@@ -4,12 +4,28 @@ import json
 import logging
 import os
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from app.models import ActivityLogEntry, AppConfig, TrackerRule
 
 logger = logging.getLogger("putio_monitor.storage")
+
+
+def _parse_iso_utc(value: Optional[str]) -> Optional[datetime]:
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    try:
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(cleaned)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except ValueError:
+        return None
 
 
 def _resolve_default_config_path() -> Path:
@@ -109,6 +125,27 @@ class ConfigStore:
             if len(self._config.activity_log) > max_entries:
                 self._config.activity_log = self._config.activity_log[:max_entries]
             self._write(self._config)
+
+    def prune_logs(self, retention_days: int) -> int:
+        """Delete log entries older than `retention_days` days. 0 (or less) keeps everything.
+
+        Returns the number of removed entries. The config file is only rewritten when something was removed.
+        """
+        if retention_days is None or retention_days <= 0:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        with self._lock:
+            kept = []
+            for entry in self._config.activity_log:
+                ts = _parse_iso_utc(entry.timestamp)
+                # Entries with an unparsable timestamp are kept rather than silently dropped
+                if ts is None or ts >= cutoff:
+                    kept.append(entry)
+            removed = len(self._config.activity_log) - len(kept)
+            if removed:
+                self._config.activity_log = kept
+                self._write(self._config)
+            return removed
 
     def clear_logs(self) -> None:
         with self._lock:

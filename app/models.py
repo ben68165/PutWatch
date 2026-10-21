@@ -30,10 +30,11 @@ class TrackerRule(BaseModel):
         default=False,
         description="Whether automatic cancellation is active for this tracker.",
     )
-    # Option to cancel transfers that show up as COMPLETED on first scan (instant/cached transfers)
+    # Option to cancel transfers whose status is COMPLETED (instant/cached on first scan, or switched to
+    # COMPLETED later). The field name is kept for backwards compatibility with existing config files.
     cancel_completed_on_first_scan: bool = Field(
         default=False,
-        description="If True, transfers that already have status COMPLETED when first scanned (instant/cached transfers) are canceled and removed immediately without needing to meet seed time or ratio.",
+        description="If True, every transfer with status COMPLETED (already completed on first scan, or switched to COMPLETED later) is canceled and removed immediately without needing to meet seed time or ratio.",
     )
     # Option to cancel immediately once download to Put.io is finished
     cancel_on_completed: bool = Field(
@@ -206,6 +207,12 @@ class AppConfig(BaseModel):
         default=True,
         description="If True, pins the filter, privacy toggle, and grouping header on the Active Transfers tab to the top and compacts it when scrolling down (unless device screen space is too small).",
     )
+    log_retention_days: int = Field(
+        default=7,
+        ge=0,
+        le=3650,
+        description="Cancellation log entries older than this many days are deleted automatically (0 = keep forever).",
+    )
     default_rule: TrackerRule = Field(
         default_factory=lambda: TrackerRule(
             tracker_id="__default__",
@@ -242,6 +249,7 @@ class SettingsUpdateRequest(BaseModel):
     clean_completed_after_cancel: Optional[bool] = None
     hide_transfer_names: Optional[bool] = None
     pin_transfers_header: Optional[bool] = None
+    log_retention_days: Optional[int] = Field(default=None, ge=0, le=3650)
 
 
 class TrackerRuleUpdateRequest(BaseModel):

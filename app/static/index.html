@@ -745,6 +745,24 @@
               />
             </div>
 
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">
+                Auto-Delete Cancellation Log Entries After (days, 0 = keep forever)
+              </label>
+              <input
+                type="number"
+                id="input-log-retention-days"
+                min="0"
+                max="3650"
+                step="1"
+                value="7"
+                class="w-40 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-amber-500"
+              />
+              <p class="text-[11px] text-slate-500 mt-1">
+                Entries on the Cancellation Log tab older than this are removed automatically. Default: 7 days.
+              </p>
+            </div>
+
             <div class="pt-2">
               <button
                 onclick="saveServiceSettings()"
@@ -816,8 +834,8 @@
         <!-- Cancel Instant / Already COMPLETED Transfers on First Scan -->
         <label class="flex items-center justify-between p-3.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 cursor-pointer">
           <div>
-            <div class="text-sm font-semibold text-indigo-300">Cancel Transfers Showing as COMPLETED on First Scan</div>
-            <div class="text-xs text-indigo-200/70">Immediately cancel &amp; remove transfers that finish instantly (already cached on Put.io) without needing to meet seed time or ratio</div>
+            <div class="text-sm font-semibold text-indigo-300">Cancel Transfers Showing as COMPLETED</div>
+            <div class="text-xs text-indigo-200/70">Immediately cancel &amp; remove every transfer with status COMPLETED &mdash; instantly finished (cached on Put.io) as well as transfers that switch to COMPLETED later. COMPLETED transfers do not seed, so time/ratio limits would never trigger for them</div>
           </div>
           <input type="checkbox" id="modal-cancel-completed-first-scan" onchange="updateModalConditionUI()" class="w-4 h-4 accent-indigo-500" />
         </label>

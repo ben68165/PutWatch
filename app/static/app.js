@@ -1265,7 +1265,7 @@ function renderTrackerCardHtml(r, isDefault = false) {
               }
               ${
                 r.cancel_completed_on_first_scan
-                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">Instant Completed Cancel</span>'
+                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">Cancel on COMPLETED</span>'
                   : ''
               }
               ${
@@ -1781,6 +1781,10 @@ function renderSettingsForm() {
   }
   document.getElementById('chk-dry-run').checked = Boolean(s.dry_run);
   document.getElementById('input-poll-interval').value = s.poll_interval_minutes || 5;
+  const logRetentionInput = document.getElementById('input-log-retention-days');
+  if (logRetentionInput && document.activeElement !== logRetentionInput) {
+    logRetentionInput.value = s.log_retention_days !== undefined && s.log_retention_days !== null ? s.log_retention_days : 7;
+  }
 
   const appIdInput = document.getElementById('input-putio-app-id');
   if (appIdInput && document.activeElement !== appIdInput) {
@@ -2297,6 +2301,10 @@ async function saveServiceSettings() {
     dry_run: document.getElementById('chk-dry-run').checked,
     poll_interval_minutes: Math.max(1, Number(document.getElementById('input-poll-interval').value) || 5),
   };
+  const logRetentionRaw = document.getElementById('input-log-retention-days')?.value;
+  if (logRetentionRaw !== undefined && logRetentionRaw !== '') {
+    payload.log_retention_days = Math.max(0, Math.min(3650, Math.round(Number(logRetentionRaw)) || 0));
+  }
   if (appIdRaw !== undefined && appIdRaw !== '') {
     payload.putio_app_id = Number(appIdRaw) || 0;
   }
