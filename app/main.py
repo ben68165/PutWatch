@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from app.models import (
     PUTWATCH_APP_DESCRIPTION,
@@ -51,7 +52,22 @@ app = FastAPI(
 
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Static files that browsers must revalidate on every load.
+
+    Prevents a stale cached app.js from being combined with a newer index.html
+    after an update (which breaks the UI layout).
+    """
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def _mask_token(token: str) -> str:
@@ -65,8 +81,16 @@ def _configured_timezone() -> str:
 
 
 @app.get("/", include_in_schema=False)
-async def serve_index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+async def serve_index() -> HTMLResponse:
+    # Append the asset modification time as a cache-busting version so a new
+    # deployment always loads the matching app.js together with index.html.
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    try:
+        version = int((STATIC_DIR / "app.js").stat().st_mtime)
+    except OSError:
+        version = 0
+    html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={version}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/favicon.ico", include_in_schema=False)
