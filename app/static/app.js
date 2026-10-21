@@ -11,6 +11,8 @@ let appState = {
 let currentTab = 'transfers';
 let currentTransferGrouping = 'none';
 let expandedTransferGroups = new Set();
+let currentLogGrouping = 'none';
+let expandedLogGroups = new Set();
 let isTransfersHeaderCompact = false;
 let oobPollTimer = null;
 
@@ -461,6 +463,7 @@ function updateTransfersStickyHeaderState() {
   const logsPrivacyBox = document.getElementById('logs-privacy-box');
   const logsPrivacyTitle = document.getElementById('logs-privacy-title');
   const logsPrivacyDesc = document.getElementById('logs-privacy-desc');
+  const logsGroupBox = document.getElementById('logs-group-box');
 
   if (isTransfersHeaderCompact) {
     if (stickyHeader)
@@ -485,7 +488,7 @@ function updateTransfersStickyHeaderState() {
 
     if (logsStickyHeader)
       logsStickyHeader.className =
-        'p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
+        'space-y-1.5 p-2 rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700/80 shadow-2xl transition-all duration-200';
     if (logsTopRow) logsTopRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-2 transition-all duration-200';
     if (logsFilterBox)
       logsFilterBox.className =
@@ -499,18 +502,21 @@ function updateTransfersStickyHeaderState() {
     if (logsPrivacyTitle)
       logsPrivacyTitle.className = 'text-xs font-semibold text-white truncate transition-all duration-200';
     if (logsPrivacyDesc) logsPrivacyDesc.classList.add('hidden');
+    if (logsGroupBox)
+      logsGroupBox.className =
+        'flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/90 border border-slate-800/80 rounded-lg px-3 py-1.5 transition-all duration-200';
   } else {
     if (stickyHeader) stickyHeader.className = 'space-y-3 transition-all duration-200';
     if (topRow) topRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200';
     if (filterBox)
       filterBox.className =
-        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200';
     if (headerTitle)
       headerTitle.className = 'text-base font-semibold text-white truncate transition-all duration-200';
     if (headerDesc) headerDesc.classList.remove('hidden');
     if (privacyBox)
       privacyBox.className =
-        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200';
     if (privacyTitle)
       privacyTitle.className = 'text-sm font-semibold text-white truncate transition-all duration-200';
     if (privacyDesc) privacyDesc.classList.remove('hidden');
@@ -518,20 +524,23 @@ function updateTransfersStickyHeaderState() {
       groupBox.className =
         'flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200';
 
-    if (logsStickyHeader) logsStickyHeader.className = 'transition-all duration-200';
+    if (logsStickyHeader) logsStickyHeader.className = 'space-y-3 transition-all duration-200';
     if (logsTopRow) logsTopRow.className = 'grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200';
     if (logsFilterBox)
       logsFilterBox.className =
-        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+        'lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200';
     if (logsHeaderTitle)
       logsHeaderTitle.className = 'text-base font-semibold text-white truncate transition-all duration-200';
     if (logsHeaderDesc) logsHeaderDesc.classList.remove('hidden');
     if (logsPrivacyBox)
       logsPrivacyBox.className =
-        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200';
+        'lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200';
     if (logsPrivacyTitle)
       logsPrivacyTitle.className = 'text-sm font-semibold text-white truncate transition-all duration-200';
     if (logsPrivacyDesc) logsPrivacyDesc.classList.remove('hidden');
+    if (logsGroupBox)
+      logsGroupBox.className =
+        'flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200';
   }
 }
 
@@ -1448,6 +1457,229 @@ function renderTrackers() {
   listEl.innerHTML = trackers.map((r) => renderTrackerCardHtml(r, false)).join('');
 }
 
+function toggleLogGroupBy(mode) {
+  currentLogGrouping = currentLogGrouping === mode ? 'none' : mode;
+  // Collapse all groups by default whenever a grouping is selected
+  expandedLogGroups.clear();
+  updateLogGroupButtonsUI();
+  renderLogs();
+}
+
+function toggleLogGroupExpand(groupId) {
+  if (expandedLogGroups.has(groupId)) {
+    expandedLogGroups.delete(groupId);
+  } else {
+    expandedLogGroups.add(groupId);
+  }
+  renderLogs();
+}
+
+function updateLogGroupButtonsUI() {
+  const modes = ['tracker', 'status', 'result', 'reason'];
+  modes.forEach((m) => {
+    const btn = document.getElementById(`btn-log-group-${m}`);
+    const dot = document.getElementById(`dot-log-group-${m}`);
+    if (!btn) return;
+    const active = currentLogGrouping === m;
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    if (active) {
+      btn.className =
+        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400 transition';
+    } else {
+      btn.className =
+        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-600 transition';
+    }
+  });
+
+  const hint = document.getElementById('log-group-active-hint');
+  if (hint) {
+    const hintLabels = {
+      none: '(Ungrouped)',
+      tracker: '(Grouped by Tracker — click a group to expand/collapse)',
+      status: '(Grouped by Status at Cancel — click a group to expand/collapse)',
+      result: '(Grouped by Result — click a group to expand/collapse)',
+      reason: '(Grouped by Reason — click a group to expand/collapse)',
+    };
+    hint.textContent = hintLabels[currentLogGrouping] || '(Ungrouped)';
+  }
+}
+
+function getLogResultKey(entry) {
+  if (entry.dry_run) return 'dry_run';
+  return entry.success ? 'success' : 'failed';
+}
+
+function renderLogRowHtml(entry, hideNames) {
+  const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
+  const timeFormatted = formatDateTime(entry.timestamp);
+  const trackerDisplay = getTrackerDisplayName(entry.tracker_id);
+  const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(entry.transfer_name)}"`;
+  return `
+        <tr class="hover:bg-slate-800/40">
+          <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
+          <td class="py-3 px-4 max-w-xs">
+            <div class="font-medium text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
+              ${escapeHtml(entry.transfer_name)}
+            </div>
+            <div class="text-[11px] text-slate-500 font-mono">ID: ${entry.transfer_id} &bull; ${escapeHtml(entry.status_at_cancel)}</div>
+          </td>
+          <td class="py-3 px-4 font-semibold text-xs text-amber-300">${escapeHtml(trackerDisplay)}</td>
+          <td class="py-3 px-4 text-xs text-slate-300 whitespace-nowrap">
+            <div>Seeded: <span class="font-mono text-white">${formatDuration(entry.seeding_seconds)}</span></div>
+            <div>Ratio: <span class="font-mono text-emerald-400">${Number(entry.ratio_at_cancel || 0).toFixed(2)}</span></div>
+          </td>
+          <td class="py-3 px-4 text-xs">
+            <div class="font-semibold text-slate-200">${escapeHtml(entry.reason)}</div>
+            <div class="text-[11px] text-slate-500">Rule: ${escapeHtml(entry.rule_summary)}</div>
+          </td>
+          <td class="py-3 px-4 text-xs whitespace-nowrap">
+            ${
+              entry.dry_run
+                ? '<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Dry-Run Simulated</span>'
+                : entry.success
+                ? '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Canceled &amp; Removed</span>'
+                : `<span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30" title="${escapeHtml(entry.error_message)}">Failed</span>`
+            }
+          </td>
+        </tr>`;
+}
+
+function buildLogGroups(logs) {
+  const byKey = (keyFn) => {
+    const map = new Map();
+    logs.forEach((entry) => {
+      const key = keyFn(entry);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(entry);
+    });
+    return map;
+  };
+  const byCountDesc = (a, b) => b.items.length - a.items.length;
+
+  if (currentLogGrouping === 'tracker') {
+    return Array.from(byKey((e) => e.tracker_id || 'untracked').entries())
+      .map(([trId, items]) => ({
+        key: trId,
+        titleHtml: `
+          <span class="inline-flex items-center gap-2 font-bold text-sm text-white">
+            <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+            <span>${escapeHtml(getTrackerDisplayName(trId))}</span>
+          </span>`,
+        items,
+      }))
+      .sort(byCountDesc);
+  }
+
+  if (currentLogGrouping === 'status') {
+    const statusOrder = ['SEEDING', 'DOWNLOADING', 'COMPLETING', 'COMPLETED', 'IN_QUEUE', 'WAITING', 'ERROR'];
+    return Array.from(byKey((e) => String(e.status_at_cancel || 'UNKNOWN').toUpperCase()).entries())
+      .map(([st, items]) => ({
+        key: st,
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            ${getStatusBadgeHtml(st)}
+            <span class="font-bold text-sm text-white">Canceled while ${escapeHtml(st)}</span>
+          </span>`,
+        items,
+      }))
+      .sort((a, b) => {
+        const idxA = statusOrder.indexOf(a.key);
+        const idxB = statusOrder.indexOf(b.key);
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+      });
+  }
+
+  if (currentLogGrouping === 'result') {
+    const resultMeta = {
+      success: {
+        badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        label: 'Canceled & Removed',
+        text: 'Successfully Canceled Transfers',
+      },
+      dry_run: {
+        badge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+        label: 'Dry-Run',
+        text: 'Simulated Cancellations (Dry-Run)',
+      },
+      failed: {
+        badge: 'bg-red-500/20 text-red-300 border-red-500/40',
+        label: 'Failed',
+        text: 'Failed Cancellations',
+      },
+    };
+    const order = ['success', 'dry_run', 'failed'];
+    return Array.from(byKey(getLogResultKey).entries())
+      .map(([key, items]) => ({
+        key,
+        titleHtml: `
+          <span class="inline-flex items-center gap-2">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold border ${resultMeta[key].badge}">${escapeHtml(resultMeta[key].label)}</span>
+            <span class="font-bold text-sm text-white">${escapeHtml(resultMeta[key].text)}</span>
+          </span>`,
+        items,
+      }))
+      .sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  }
+
+  // reason
+  return Array.from(byKey((e) => String(e.reason || 'Unknown reason')).entries())
+    .map(([reason, items]) => ({
+      key: reason,
+      titleHtml: `
+        <span class="inline-flex items-center gap-2 font-bold text-sm text-white">
+          <span class="w-2 h-2 rounded-full bg-sky-400"></span>
+          <span>${escapeHtml(reason)}</span>
+        </span>`,
+      items,
+    }))
+    .sort(byCountDesc);
+}
+
+function renderLogGroupsHtml(logs, hideNames) {
+  return buildLogGroups(logs)
+    .map((g) => {
+      const groupId = `${currentLogGrouping}:${g.key}`;
+      const isExpanded = expandedLogGroups.has(groupId);
+      const latestTs = g.items.reduce((acc, item) => Math.max(acc, parseTimestamp(item.timestamp)), 0);
+      const latestText = latestTs ? formatDateTime(new Date(latestTs).toISOString()) : '';
+      const headerRow = `
+        <tr
+          onclick="toggleLogGroupExpand(${JSON.stringify(groupId).replace(/"/g, '&quot;')})"
+          role="button"
+          aria-expanded="${isExpanded ? 'true' : 'false'}"
+          class="cursor-pointer select-none bg-slate-950/70 hover:bg-slate-800/60 transition"
+        >
+          <td colspan="6" class="py-3 px-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <svg
+                  class="w-4 h-4 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-400' : ''}"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+                ${g.titleHtml}
+                <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-slate-800 text-slate-300">
+                  ${g.items.length} entr${g.items.length === 1 ? 'y' : 'ies'}
+                </span>
+                <span class="text-xs font-mono text-slate-400">Latest: ${escapeHtml(latestText)}</span>
+              </div>
+              <span class="text-[11px] font-medium ${isExpanded ? 'text-amber-400' : 'text-slate-500'}">
+                ${isExpanded ? 'Click to collapse' : 'Click to expand'}
+              </span>
+            </div>
+          </td>
+        </tr>`;
+      const body = isExpanded ? g.items.map((entry) => renderLogRowHtml(entry, hideNames)).join('') : '';
+      return headerRow + body;
+    })
+    .join('');
+}
+
 function renderLogs() {
   const tbody = document.getElementById('logs-table-body');
   const allLogs = appState.activity_log || [];
@@ -1465,6 +1697,7 @@ function renderLogs() {
   const filter = rawLogSearch.trim().toLowerCase();
   const hideNames = Boolean(appState.settings?.hide_transfer_names);
   updateLogSortUI();
+  updateLogGroupButtonsUI();
 
   function compareLogs(a, b) {
     let valA, valB, isString = false;
@@ -1536,43 +1769,12 @@ function renderLogs() {
     return;
   }
 
-  const nameBlurClasses = hideNames ? 'blur-[6px] select-none' : '';
+  if (currentLogGrouping === 'none') {
+    tbody.innerHTML = logs.map((entry) => renderLogRowHtml(entry, hideNames)).join('');
+    return;
+  }
 
-  tbody.innerHTML = logs
-    .map((entry) => {
-      const timeFormatted = formatDateTime(entry.timestamp);
-      const trackerDisplay = getTrackerDisplayName(entry.tracker_id);
-      const nameTitleAttr = hideNames ? '' : `title="${escapeHtml(entry.transfer_name)}"`;
-      return `
-        <tr class="hover:bg-slate-800/40">
-          <td class="py-3 px-4 font-mono text-xs text-slate-400 whitespace-nowrap">${escapeHtml(timeFormatted)}</td>
-          <td class="py-3 px-4 max-w-xs">
-            <div class="font-medium text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
-              ${escapeHtml(entry.transfer_name)}
-            </div>
-            <div class="text-[11px] text-slate-500 font-mono">ID: ${entry.transfer_id} &bull; ${escapeHtml(entry.status_at_cancel)}</div>
-          </td>
-          <td class="py-3 px-4 font-semibold text-xs text-amber-300">${escapeHtml(trackerDisplay)}</td>
-          <td class="py-3 px-4 text-xs text-slate-300 whitespace-nowrap">
-            <div>Seeded: <span class="font-mono text-white">${formatDuration(entry.seeding_seconds)}</span></div>
-            <div>Ratio: <span class="font-mono text-emerald-400">${Number(entry.ratio_at_cancel || 0).toFixed(2)}</span></div>
-          </td>
-          <td class="py-3 px-4 text-xs">
-            <div class="font-semibold text-slate-200">${escapeHtml(entry.reason)}</div>
-            <div class="text-[11px] text-slate-500">Rule: ${escapeHtml(entry.rule_summary)}</div>
-          </td>
-          <td class="py-3 px-4 text-xs whitespace-nowrap">
-            ${
-              entry.dry_run
-                ? '<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">Dry-Run Simulated</span>'
-                : entry.success
-                ? '<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Canceled &amp; Removed</span>'
-                : `<span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30" title="${escapeHtml(entry.error_message)}">Failed</span>`
-            }
-          </td>
-        </tr>`;
-    })
-    .join('');
+  tbody.innerHTML = renderLogGroupsHtml(logs, hideNames);
 }
 
 function renderSettingsForm() {

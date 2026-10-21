@@ -175,11 +175,11 @@
         <!-- Top Row: 3/4 Filter & Info Box + 1/4 Privacy Toggle Switch Box -->
         <div id="transfers-top-row" class="grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200">
           <!-- Left 3/4 Box: Title, Filter Input & Manage Rules Link -->
-          <div id="transfers-filter-box" class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+          <div id="transfers-filter-box" class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200">
             <div class="min-w-0">
-              <h2 id="transfers-header-title" class="text-base font-semibold text-white truncate transition-all duration-200">Live Put.io Transfers &amp; Tracker Identification</h2>
-              <p id="transfers-header-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">
-                Trackers are automatically extracted from active transfers (`tracker` announce URL &amp; magnet `tr=` sources). Click any tracker badge to configure its cancellation rule.
+              <h2 id="transfers-header-title" class="text-base font-semibold text-white truncate transition-all duration-200">Live Put.io Transfers</h2>
+              <p id="transfers-header-desc" class="text-xs text-slate-400 mt-0.5 truncate transition-all duration-200" title="Trackers are detected automatically. Click a tracker badge to configure its cancellation rule.">
+                Trackers are detected automatically. Click a badge to set its rule.
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2 shrink-0">
@@ -239,7 +239,7 @@
           </div>
 
           <!-- Right 1/4 Box: Hide Transfer Names Toggle Switch -->
-          <div id="transfers-privacy-box" class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+          <div id="transfers-privacy-box" class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200">
             <div class="min-w-0">
               <div id="transfers-privacy-title" class="text-sm font-semibold text-white truncate transition-all duration-200">Hide Transfer Names</div>
               <p id="transfers-privacy-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">Blur titles in list for privacy</p>
@@ -392,15 +392,15 @@
 
     <!-- TAB 3: ACTIVITY LOG -->
     <section id="tab-logs" class="hidden space-y-4">
-      <!-- Sticky & Auto-Compacting Upper Toolbar (Filter, Clear Log, Pin & Privacy Toggle) -->
-      <div id="logs-sticky-header" class="transition-all duration-200">
+      <!-- Sticky & Auto-Compacting Upper Toolbar (Filter, Sort, Clear Log, Grouping, Pin & Privacy Toggle) -->
+      <div id="logs-sticky-header" class="space-y-3 transition-all duration-200">
         <div id="logs-top-row" class="grid grid-cols-1 lg:grid-cols-4 gap-4 transition-all duration-200">
-          <!-- Left 3/4 Box: Title, Filter Input, Clear Log Button & Pin Header Button -->
-          <div id="logs-filter-box" class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+          <!-- Left 3/4 Box: Title, Filter Input, Sort & Clear Log Button -->
+          <div id="logs-filter-box" class="lg:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200">
             <div class="min-w-0">
-              <h2 id="logs-header-title" class="text-base font-semibold text-white truncate transition-all duration-200">Automatic &amp; Manual Cancellation Log</h2>
-              <p id="logs-header-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">
-                Audit history of transfers stopped and removed from your Put.io transfer list.
+              <h2 id="logs-header-title" class="text-base font-semibold text-white truncate transition-all duration-200">Cancellation Log</h2>
+              <p id="logs-header-desc" class="text-xs text-slate-400 mt-0.5 truncate transition-all duration-200" title="Audit history of transfers stopped and removed from your Put.io transfer list.">
+                History of canceled &amp; removed transfers.
               </p>
             </div>
             <div class="flex flex-wrap items-center gap-2 shrink-0">
@@ -456,23 +456,11 @@
               >
                 Clear Log
               </button>
-              <button
-                type="button"
-                id="btn-pin-logs-header"
-                onclick="togglePinTransfersHeader()"
-                title="Pin or unpin this upper toolbar when scrolling down"
-                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-amber-500/15 border-amber-500/40 text-amber-300 shrink-0"
-              >
-                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                </svg>
-                <span id="label-pin-logs-header">Pinned</span>
-              </button>
             </div>
           </div>
 
           <!-- Right 1/4 Box: Hide Transfer Names Toggle Switch -->
-          <div id="logs-privacy-box" class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
+          <div id="logs-privacy-box" class="lg:col-span-1 flex items-center justify-between gap-3 bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 min-h-[88px] transition-all duration-200">
             <div class="min-w-0">
               <div id="logs-privacy-title" class="text-sm font-semibold text-white truncate transition-all duration-200">Hide Transfer Names</div>
               <p id="logs-privacy-desc" class="text-xs text-slate-400 mt-0.5 transition-all duration-200">Blur titles in log for privacy</p>
@@ -492,6 +480,72 @@
                 class="w-11 h-6 bg-slate-800 border border-slate-700 rounded-full peer peer-focus:outline-none peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 peer-checked:after:bg-slate-950 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:border-amber-400"
               ></div>
             </label>
+          </div>
+        </div>
+
+        <!-- Second Row: Full-Width Grouping Toggle Bar + Pin Header Control -->
+        <div id="logs-group-box" class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl px-4 py-3 transition-all duration-200">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Group Log By</span>
+            <span id="log-group-active-hint" class="text-xs text-slate-500 truncate">(Ungrouped)</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              id="btn-log-group-tracker"
+              onclick="toggleLogGroupBy('tracker')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-log-group-tracker"></span>
+              <span>Tracker</span>
+            </button>
+            <button
+              type="button"
+              id="btn-log-group-status"
+              onclick="toggleLogGroupBy('status')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-log-group-status"></span>
+              <span>Status at Cancel</span>
+            </button>
+            <button
+              type="button"
+              id="btn-log-group-result"
+              onclick="toggleLogGroupBy('result')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-log-group-result"></span>
+              <span>Result</span>
+            </button>
+            <button
+              type="button"
+              id="btn-log-group-reason"
+              onclick="toggleLogGroupBy('reason')"
+              aria-pressed="false"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white"
+            >
+              <span class="w-2 h-2 rounded-full bg-slate-600 transition" id="dot-log-group-reason"></span>
+              <span>Reason</span>
+            </button>
+
+            <span class="hidden sm:inline-block h-4 w-px bg-slate-800 mx-0.5"></span>
+
+            <!-- Pin / Unpin Upper Section Button -->
+            <button
+              type="button"
+              id="btn-pin-logs-header"
+              onclick="togglePinTransfersHeader()"
+              title="Pin or unpin this upper toolbar when scrolling down"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer bg-amber-500/15 border-amber-500/40 text-amber-300 shrink-0"
+              >
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+              </svg>
+              <span id="label-pin-logs-header">Pinned</span>
+              </button>
           </div>
         </div>
       </div>
