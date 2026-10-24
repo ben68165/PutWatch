@@ -1322,9 +1322,6 @@ function renderTrackerCardHtml(r, isDefault = false) {
   const totalMinutes = Number(r.max_time_minutes || 0);
   const hours = Math.floor(totalMinutes / 60);
   const mins = Math.round(totalMinutes % 60);
-  const timeText = r.cancel_on_completed
-    ? 'Immediate on Download Complete'
-    : `${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Total Age' : 'Seeding Time'})`;
 
   const displayLabel = isDefault
     ? 'Default Fallback Rule (Unmatched Trackers)'
@@ -1339,65 +1336,64 @@ function renderTrackerCardHtml(r, isDefault = false) {
   }
   const keepDurationText = formatDuration(Number(r.keep_alive_hours || 72) * 3600);
 
-  return `
-    <div class="bg-slate-900 border ${
-      r.enabled ? 'border-amber-500/50 shadow-lg shadow-amber-500/5' : 'border-slate-800'
-    } rounded-xl p-5 flex flex-col justify-between gap-4">
-      <div class="space-y-3">
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-bold text-sm sm:text-base text-white truncate">
-                ${escapeHtml(displayLabel)}
-              </span>
-              ${
-                !isDefault && r.discovered_from_transfers
-                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30">Auto-Discovered</span>'
-                  : ''
-              }
-              ${
-                isDefault
-                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Global Fallback</span>'
-                  : ''
-              }
-              ${
-                r.cancel_completed_on_first_scan
-                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">Cancel on COMPLETED</span>'
-                  : ''
-              }
-              ${
-                r.cancel_on_completed
-                  ? '<span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">Cancel on Complete</span>'
-                  : ''
-              }
-              ${
-                r.cancel_stalled_download_enabled
-                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-orange-500/15 text-orange-300 border border-orange-500/30">Cancel Stalled DL (${escapeHtml(formatDuration(Number(r.cancel_stalled_download_hours || 24) * 3600))})</span>`
-                  : ''
-              }
-              ${
-                r.notify_stalled_download_enabled
-                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">Notify Stalled DL (${escapeHtml(formatDuration(Number(r.notify_stalled_download_hours || 6) * 3600))})</span>`
-                  : ''
-              }
-              ${
-                r.notify_long_queued_enabled
-                  ? `<span class="px-2 py-0.5 text-[10px] rounded-full bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">Notify Queued (${escapeHtml(formatDuration(Number(r.notify_long_queued_hours || 6) * 3600))})</span>`
-                  : ''
-              }
-            </div>
-            ${
-              isDefault
-                ? '<p class="text-xs text-slate-400 mt-0.5">Applies to any transfer whose tracker does not have its own specific rule enabled.</p>'
-                : r.sample_announce_url
-                ? `<p class="text-[11px] text-slate-500 font-mono truncate mt-0.5" title="${escapeHtml(r.sample_announce_url)}">${escapeHtml(r.sample_announce_url)}</p>`
-                : ''
-            }
-          </div>
+  // Build compact rule condition chips
+  const chips = [];
 
-          <!-- Quick Enable Toggle -->
+  if (r.cancel_on_completed) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10px] font-medium">⚡ Cancel on Download</span>`);
+  } else {
+    if (r.use_time_rule) {
+      chips.push(`<span class="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium">⏱ ${hours}h ${mins}m (${r.time_metric === 'total_age' ? 'Age' : 'Seed'})</span>`);
+    }
+    if (r.use_time_rule && r.use_ratio_rule) {
+      chips.push(`<span class="text-[10px] font-bold ${r.condition_operator === 'AND' ? 'text-sky-300' : 'text-amber-400'}">${escapeHtml(r.condition_operator)}</span>`);
+    }
+    if (r.use_ratio_rule) {
+      chips.push(`<span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-medium">📈 Ratio &ge; ${Number(r.max_ratio).toFixed(2)}</span>`);
+    }
+  }
+
+  if (r.cancel_completed_on_first_scan && !r.cancel_on_completed) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-[10px] font-medium">✓ Cancel COMPLETED</span>`);
+  }
+  if (r.cancel_stalled_download_enabled) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/30 text-orange-300 text-[10px] font-medium">⚠ Stalled DL &ge; ${escapeHtml(formatDuration(Number(r.cancel_stalled_download_hours || 24) * 3600))}</span>`);
+  }
+  if (r.notify_stalled_download_enabled) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium">🔔 Stalled DL &ge; ${escapeHtml(formatDuration(Number(r.notify_stalled_download_hours || 6) * 3600))}</span>`);
+  }
+  if (r.notify_long_queued_enabled) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 text-[10px] font-medium">🔔 Queued &ge; ${escapeHtml(formatDuration(Number(r.notify_long_queued_hours || 6) * 3600))}</span>`);
+  }
+  if (keepParts.length > 0) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[10px] font-medium">★ Keep ${escapeHtml(keepParts.join('+'))} (${escapeHtml(keepDurationText)})</span>`);
+  }
+
+  if (chips.length === 0) {
+    chips.push(`<span class="text-[11px] text-slate-500 italic">No conditions active</span>`);
+  }
+
+  const borderClass = r.enabled
+    ? 'border-amber-500/40 shadow-sm shadow-amber-500/5'
+    : 'border-slate-800';
+
+  if (isDefault) {
+    return `
+      <div class="bg-slate-900 border ${borderClass} rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="space-y-1.5 min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="w-2 h-2 rounded-full ${r.enabled ? 'bg-purple-400' : 'bg-slate-500'} shrink-0"></span>
+            <span class="font-bold text-sm sm:text-base text-white truncate">${escapeHtml(displayLabel)}</span>
+            <span class="px-2 py-0.5 text-[10px] rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Global Fallback</span>
+          </div>
+          <p class="text-xs text-slate-400">Applies to transfers without a specific enabled tracker rule.</p>
+          <div class="flex flex-wrap items-center gap-1.5 pt-1">
+            ${chips.join('')}
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
           <button
-            onclick="quickToggleRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            onclick="quickToggleRule('__default__')"
             class="px-3 py-1 rounded-full text-xs font-bold border transition cursor-pointer shrink-0 ${
               r.enabled
                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -1406,89 +1402,75 @@ function renderTrackerCardHtml(r, isDefault = false) {
           >
             ${r.enabled ? '● Rule Enabled' : '○ Disabled'}
           </button>
+          <button
+            onclick="openRuleModal('__default__')"
+            class="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold text-xs transition cursor-pointer"
+          >
+            Edit Rule
+          </button>
         </div>
+      </div>`;
+  }
 
-        <!-- Rule Conditions Summary Boxes -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-          <div class="p-2.5 rounded-lg bg-slate-950 border ${
-            r.cancel_on_completed
-              ? 'border-rose-500/40 text-rose-200'
-              : r.use_time_rule
-              ? 'border-amber-500/30 text-slate-200'
-              : 'border-slate-800/80 text-slate-500'
-          }">
-            <div class="text-[10px] uppercase tracking-wider text-slate-400">Time / Complete Rule</div>
-            <div class="font-semibold mt-0.5">${
-              r.cancel_on_completed || r.use_time_rule ? escapeHtml(timeText) : 'Off'
-            }</div>
-          </div>
-
-          <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex flex-col justify-center items-center">
-            <div class="text-[10px] uppercase tracking-wider text-slate-400">Condition Logic</div>
-            <div class="font-bold text-amber-400 mt-0.5">
+  return `
+    <div class="bg-slate-900/80 border ${borderClass} hover:border-slate-700/80 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition">
+      <div class="space-y-1.5 min-w-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="w-1.5 h-1.5 rounded-full ${r.enabled ? 'bg-amber-400' : 'bg-slate-500'} shrink-0"></span>
+              <span class="font-bold text-xs sm:text-sm text-slate-100 truncate" title="${escapeHtml(r.tracker_id)}">
+                ${escapeHtml(displayLabel)}
+              </span>
               ${
-                r.cancel_on_completed
-                  ? 'Immediate'
-                  : r.use_time_rule && r.use_ratio_rule
-                  ? `${r.condition_operator} (${r.condition_operator === 'AND' ? 'Both Required' : 'Either Triggers'})`
-                  : 'Single Rule'
+                r.discovered_from_transfers
+                  ? '<span class="px-1.5 py-0.5 text-[9px] rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0">Auto-Discovered</span>'
+                  : '<span class="px-1.5 py-0.5 text-[9px] rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">Custom</span>'
               }
             </div>
+            ${
+              r.sample_announce_url
+                ? `<div class="text-[10px] text-slate-500 font-mono truncate mt-0.5" title="${escapeHtml(r.sample_announce_url)}">${escapeHtml(r.sample_announce_url)}</div>`
+                : ''
+            }
           </div>
-
-          <div class="p-2.5 rounded-lg bg-slate-950 border ${
-            r.use_ratio_rule && !r.cancel_on_completed
-              ? 'border-emerald-500/30 text-slate-200'
-              : 'border-slate-800/80 text-slate-500'
-          }">
-            <div class="text-[10px] uppercase tracking-wider text-slate-400">Ratio Rule</div>
-            <div class="font-semibold mt-0.5">${
-              r.use_ratio_rule && !r.cancel_on_completed ? `Ratio >= ${Number(r.max_ratio).toFixed(2)}` : 'Off'
-            }</div>
-          </div>
+          <button
+            onclick="quickToggleRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-0.5 rounded-full text-[10px] font-bold border transition cursor-pointer shrink-0 ${
+              r.enabled
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+            }"
+            title="Click to toggle rule"
+          >
+            ${r.enabled ? '● Enabled' : '○ Disabled'}
+          </button>
         </div>
 
-        <!-- Keep-Alive Summary Banner -->
-        <div class="p-2.5 rounded-lg bg-slate-950 border ${
-          keepParts.length > 0 ? 'border-sky-500/40 text-sky-200' : 'border-slate-800/80 text-slate-500'
-        } text-xs flex items-center justify-between">
-          <span class="text-[10px] uppercase tracking-wider text-slate-400">Keep-Alive Exceptions</span>
-          <span class="font-semibold">
-            ${
-              keepParts.length > 0
-                ? `★ Keep ${escapeHtml(keepParts.join(' + '))} for ${escapeHtml(keepDurationText)}`
-                : 'None configured'
-            }
-          </span>
+        <!-- Compact Rule Overview Chips -->
+        <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+          ${chips.join('')}
         </div>
       </div>
 
-      <div class="flex items-center justify-between pt-3 border-t border-slate-800/80 text-xs">
-        <div class="text-slate-400 flex items-center gap-3">
-          ${
-            !isDefault
-              ? `<span>Active transfers: <strong class="text-white">${r.matched_transfers_count || 0}</strong></span>
-                 <span>Canceled: <strong class="text-amber-300">${r.canceled_transfers_count || 0}</strong></span>`
-              : `<span>Summary: <strong class="text-amber-300">${escapeHtml(r.rule_summary)}</strong></span>`
-          }
+      <div class="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs">
+        <div class="text-slate-400 text-[11px] flex items-center gap-2">
+          <span>Active: <strong class="text-slate-200">${r.matched_transfers_count || 0}</strong></span>
+          <span>Canceled: <strong class="text-amber-400/80">${r.canceled_transfers_count || 0}</strong></span>
         </div>
-        <div class="flex items-center gap-2">
-          ${
-            !isDefault
-              ? `<button
-                   onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
-                   class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 transition cursor-pointer"
-                   title="Remove tracker from list"
-                 >
-                   Delete
-                 </button>`
-              : ''
-          }
+        <div class="flex items-center gap-1.5">
+          <button
+            onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-1 rounded-md bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 text-[11px] transition cursor-pointer"
+            title="Remove tracker from list"
+          >
+            Delete
+          </button>
           <button
             onclick="openRuleModal(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
-            class="px-3.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold transition cursor-pointer"
+            class="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold text-[11px] transition cursor-pointer"
           >
-            Edit Rule
+            Configure
           </button>
         </div>
       </div>
@@ -1498,7 +1480,7 @@ function renderTrackerCardHtml(r, isDefault = false) {
 function renderDiscoveredDisabledTrackerCardHtml(r) {
   const displayLabel = getTrackerDisplayName(r.tracker_id);
   return `
-    <div class="bg-slate-900/60 border border-slate-800/80 hover:border-slate-700/80 rounded-xl p-3 flex flex-col justify-between gap-2.5 transition">
+    <div class="bg-slate-900/60 border border-slate-800/80 hover:border-slate-700/80 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition">
       <div class="space-y-1.5 min-w-0">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0 flex-1">
