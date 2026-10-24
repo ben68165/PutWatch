@@ -920,7 +920,19 @@ function renderSingleTransferCardHtml(t, hideNames) {
       <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
         <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div class="flex flex-wrap items-center gap-2">
-            <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold text-[11px]">Active Rule: ${escapeHtml(ev.rule_summary)}</span>
+            <span class="group relative inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold text-[11px] cursor-help border border-amber-500/40 select-none">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              <span>Active Rule</span>
+              <svg class="w-3 h-3 text-amber-400/80" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+              </svg>
+              <!-- Tooltip on Hover -->
+              <span class="pointer-events-none absolute bottom-full left-0 mb-2 hidden group-hover:block z-30 w-max max-w-xs sm:max-w-md p-2.5 rounded-lg bg-slate-950 text-slate-200 text-xs font-normal border border-slate-700 shadow-2xl shadow-black/90 whitespace-normal leading-relaxed">
+                <span class="text-amber-300 font-semibold block mb-0.5 text-[11px]">Active Rule:</span>
+                ${escapeHtml(ev.rule_summary)}
+                <span class="absolute top-full left-4 border-4 border-transparent border-t-slate-700"></span>
+              </span>
+            </span>
             ${protectionBadge}
             ${
               !ev.eligible_status
