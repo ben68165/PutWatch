@@ -1819,11 +1819,21 @@ function renderSettingsForm() {
 }
 
 // Rule Modal Management
-function openRuleModal(trackerId) {
-  const modal = document.getElementById('rule-modal');
-  const idInput = document.getElementById('modal-tracker-id');
-  const nameInput = document.getElementById('modal-display-name');
-  const sampleUrlEl = document.getElementById('modal-sample-url');
+function trackerHasSpecificSettings(t) {
+  if (!t) return false;
+  if (t.enabled) return true;
+  if (!t.discovered_from_transfers) return true;
+  if (t.display_name && t.display_name !== t.tracker_id) return true;
+  if (t.cancel_completed_on_first_scan || t.cancel_on_completed) return true;
+  if (t.notify_stalled_download_enabled || t.cancel_stalled_download_enabled || t.notify_long_queued_enabled) return true;
+  if (t.use_ratio_rule || t.keep_top_seeded_enabled || t.keep_largest_enabled) return true;
+  if (t.max_time_minutes && t.max_time_minutes !== 120) return true;
+  return false;
+}
+
+function applyRuleSettingsToModal(rule) {
+  if (!rule) return;
+
   const enabledChk = document.getElementById('modal-enabled');
   const cancelCompletedFirstScanChk = document.getElementById('modal-cancel-completed-first-scan');
   const cancelOnCompletedChk = document.getElementById('modal-cancel-on-completed');
@@ -1852,6 +1862,59 @@ function openRuleModal(trackerId) {
   const keepAliveDaysInput = document.getElementById('modal-keep-alive-days');
   const keepAliveHoursInput = document.getElementById('modal-keep-alive-hours');
 
+  enabledChk.checked = Boolean(rule.enabled);
+  cancelCompletedFirstScanChk.checked = Boolean(rule.cancel_completed_on_first_scan);
+  cancelOnCompletedChk.checked = Boolean(rule.cancel_on_completed);
+
+  notifyStalledDownloadChk.checked = Boolean(rule.notify_stalled_download_enabled);
+  const totalNotifyStalledHours = Number(rule.notify_stalled_download_hours ?? 6);
+  notifyStalledDaysInput.value = Math.floor(totalNotifyStalledHours / 24);
+  notifyStalledHoursInput.value = Math.round(totalNotifyStalledHours % 24);
+
+  cancelStalledDownloadChk.checked = Boolean(rule.cancel_stalled_download_enabled);
+  const totalCancelStalledHours = Number(rule.cancel_stalled_download_hours ?? 24);
+  cancelStalledDaysInput.value = Math.floor(totalCancelStalledHours / 24);
+  cancelStalledHoursInput.value = Math.round(totalCancelStalledHours % 24);
+
+  notifyLongQueuedChk.checked = Boolean(rule.notify_long_queued_enabled);
+  const totalNotifyQueuedHours = Number(rule.notify_long_queued_hours ?? 6);
+  notifyQueuedDaysInput.value = Math.floor(totalNotifyQueuedHours / 24);
+  notifyQueuedHoursInput.value = Math.round(totalNotifyQueuedHours % 24);
+
+  useTimeChk.checked = Boolean(rule.use_time_rule);
+  const totalMins = Number(rule.max_time_minutes ?? 120);
+  hoursInput.value = Math.floor(totalMins / 60);
+  minsInput.value = Math.round(totalMins % 60);
+  metricSelect.value = rule.time_metric || 'seeding_time';
+
+  useRatioChk.checked = Boolean(rule.use_ratio_rule);
+  ratioInput.value = Number(rule.max_ratio ?? 1.0).toFixed(2);
+
+  keepTopSeededChk.checked = Boolean(rule.keep_top_seeded_enabled);
+  keepTopSeededCountInput.value = Number(rule.keep_top_seeded_count || 3);
+  topSeededMetricSelect.value = rule.top_seeded_metric || 'up_speed';
+
+  keepLargestChk.checked = Boolean(rule.keep_largest_enabled);
+  keepLargestCountInput.value = Number(rule.keep_largest_count || 3);
+
+  const totalKeepHours = Number(rule.keep_alive_hours ?? 72);
+  keepAliveDaysInput.value = Math.floor(totalKeepHours / 24);
+  keepAliveHoursInput.value = Math.round(totalKeepHours % 24);
+
+  const opRadios = document.getElementsByName('modal-operator');
+  opRadios.forEach((r) => {
+    r.checked = r.value === (rule.condition_operator || 'OR');
+  });
+
+  updateModalConditionUI();
+}
+
+function openRuleModal(trackerId) {
+  const modal = document.getElementById('rule-modal');
+  const idInput = document.getElementById('modal-tracker-id');
+  const nameInput = document.getElementById('modal-display-name');
+  const sampleUrlEl = document.getElementById('modal-sample-url');
+
   let existing = null;
   if (trackerId === '__default__') {
     existing = appState.default_rule;
@@ -1867,47 +1930,7 @@ function openRuleModal(trackerId) {
     idInput.disabled = trackerId === '__default__';
     nameInput.value = existing.display_name || '';
     sampleUrlEl.textContent = existing.sample_announce_url ? `Sample Announce URL: ${existing.sample_announce_url}` : '';
-    enabledChk.checked = Boolean(existing.enabled);
-    cancelCompletedFirstScanChk.checked = Boolean(existing.cancel_completed_on_first_scan);
-    cancelOnCompletedChk.checked = Boolean(existing.cancel_on_completed);
-
-    notifyStalledDownloadChk.checked = Boolean(existing.notify_stalled_download_enabled);
-    const totalNotifyStalledHours = Number(existing.notify_stalled_download_hours ?? 6);
-    notifyStalledDaysInput.value = Math.floor(totalNotifyStalledHours / 24);
-    notifyStalledHoursInput.value = Math.round(totalNotifyStalledHours % 24);
-
-    cancelStalledDownloadChk.checked = Boolean(existing.cancel_stalled_download_enabled);
-    const totalCancelStalledHours = Number(existing.cancel_stalled_download_hours ?? 24);
-    cancelStalledDaysInput.value = Math.floor(totalCancelStalledHours / 24);
-    cancelStalledHoursInput.value = Math.round(totalCancelStalledHours % 24);
-
-    notifyLongQueuedChk.checked = Boolean(existing.notify_long_queued_enabled);
-    const totalNotifyQueuedHours = Number(existing.notify_long_queued_hours ?? 6);
-    notifyQueuedDaysInput.value = Math.floor(totalNotifyQueuedHours / 24);
-    notifyQueuedHoursInput.value = Math.round(totalNotifyQueuedHours % 24);
-
-    useTimeChk.checked = Boolean(existing.use_time_rule);
-    const totalMins = Number(existing.max_time_minutes || 0);
-    hoursInput.value = Math.floor(totalMins / 60);
-    minsInput.value = Math.round(totalMins % 60);
-    metricSelect.value = existing.time_metric || 'seeding_time';
-    useRatioChk.checked = Boolean(existing.use_ratio_rule);
-    ratioInput.value = Number(existing.max_ratio || 1.0).toFixed(2);
-
-    keepTopSeededChk.checked = Boolean(existing.keep_top_seeded_enabled);
-    keepTopSeededCountInput.value = Number(existing.keep_top_seeded_count || 3);
-    topSeededMetricSelect.value = existing.top_seeded_metric || 'up_speed';
-    keepLargestChk.checked = Boolean(existing.keep_largest_enabled);
-    keepLargestCountInput.value = Number(existing.keep_largest_count || 3);
-
-    const totalKeepHours = Number(existing.keep_alive_hours || 72);
-    keepAliveDaysInput.value = Math.floor(totalKeepHours / 24);
-    keepAliveHoursInput.value = Math.round(totalKeepHours % 24);
-
-    const opRadios = document.getElementsByName('modal-operator');
-    opRadios.forEach((r) => {
-      r.checked = r.value === (existing.condition_operator || 'OR');
-    });
+    applyRuleSettingsToModal(existing);
   } else {
     document.getElementById('modal-title').textContent = trackerId
       ? `Configure Rule: ${getTrackerDisplayName(trackerId)}`
@@ -1916,40 +1939,64 @@ function openRuleModal(trackerId) {
     idInput.disabled = false;
     nameInput.value = '';
     sampleUrlEl.textContent = '';
-    enabledChk.checked = true;
-    cancelCompletedFirstScanChk.checked = false;
-    cancelOnCompletedChk.checked = false;
-
-    notifyStalledDownloadChk.checked = false;
-    notifyStalledDaysInput.value = 0;
-    notifyStalledHoursInput.value = 6;
-    cancelStalledDownloadChk.checked = false;
-    cancelStalledDaysInput.value = 1;
-    cancelStalledHoursInput.value = 0;
-    notifyLongQueuedChk.checked = false;
-    notifyQueuedDaysInput.value = 0;
-    notifyQueuedHoursInput.value = 6;
-
-    useTimeChk.checked = true;
-    hoursInput.value = 2;
-    minsInput.value = 0;
-    metricSelect.value = 'seeding_time';
-    useRatioChk.checked = false;
-    ratioInput.value = '1.00';
-    keepTopSeededChk.checked = false;
-    keepTopSeededCountInput.value = 3;
-    topSeededMetricSelect.value = 'up_speed';
-    keepLargestChk.checked = false;
-    keepLargestCountInput.value = 3;
-    keepAliveDaysInput.value = 3;
-    keepAliveHoursInput.value = 0;
-    const opRadios = document.getElementsByName('modal-operator');
-    opRadios.forEach((r) => {
-      r.checked = r.value === 'OR';
+    applyRuleSettingsToModal({
+      enabled: true,
+      cancel_completed_on_first_scan: false,
+      cancel_on_completed: false,
+      notify_stalled_download_enabled: false,
+      notify_stalled_download_hours: 6,
+      cancel_stalled_download_enabled: false,
+      cancel_stalled_download_hours: 24,
+      notify_long_queued_enabled: false,
+      notify_long_queued_hours: 6,
+      use_time_rule: true,
+      max_time_minutes: 120,
+      time_metric: 'seeding_time',
+      use_ratio_rule: false,
+      max_ratio: 1.0,
+      condition_operator: 'OR',
+      keep_top_seeded_enabled: false,
+      keep_top_seeded_count: 3,
+      top_seeded_metric: 'up_speed',
+      keep_largest_enabled: false,
+      keep_largest_count: 3,
+      keep_alive_hours: 72,
     });
   }
 
-  updateModalConditionUI();
+  // Populate Copy Settings Dropdown for specific trackers
+  const copyContainer = document.getElementById('modal-copy-container');
+  const copySelect = document.getElementById('modal-copy-source');
+
+  if (trackerId === '__default__') {
+    if (copyContainer) copyContainer.classList.add('hidden');
+  } else {
+    if (copyContainer) copyContainer.classList.remove('hidden');
+    if (copySelect) {
+      const candidates = (appState.trackers || [])
+        .filter((t) => t.tracker_id !== trackerId && trackerHasSpecificSettings(t))
+        .sort((a, b) =>
+          getTrackerDisplayName(a.tracker_id).localeCompare(getTrackerDisplayName(b.tracker_id))
+        );
+
+      let optionsHtml = '<option value="" disabled selected>Select tracker settings to copy...</option>';
+      optionsHtml += '<option value="__empty_fallback__">↺ Revert to Empty (Fall back to default options)</option>';
+      if (appState.default_rule) {
+        optionsHtml += '<option value="__default__">Global Fallback Rule</option>';
+      }
+      if (candidates.length > 0) {
+        optionsHtml += '<optgroup label="Trackers with Specific Settings">';
+        candidates.forEach((t) => {
+          const label = getTrackerDisplayName(t.tracker_id);
+          const displayTxt = label !== t.tracker_id ? `${label} (${t.tracker_id})` : label;
+          optionsHtml += `<option value="${escapeHtml(t.tracker_id)}">${escapeHtml(displayTxt)}</option>`;
+        });
+        optionsHtml += '</optgroup>';
+      }
+      copySelect.innerHTML = optionsHtml;
+    }
+  }
+
   modal.classList.remove('hidden');
 
   // Always reset scroll position of the modal settings container to the top
@@ -1996,11 +2043,100 @@ function updateModalConditionUI() {
     keepTopSeeded || keepLargest ? '1' : '0.45';
 }
 
-async function saveModalRule() {
+async function applyAndSaveCopiedRuleSettings() {
+  const selectEl = document.getElementById('modal-copy-source');
+  if (!selectEl) return;
+  const selectedSource = selectEl.value;
+  if (!selectedSource) {
+    showToast('Please select a tracker or fallback option to copy settings from.', 'warning');
+    return;
+  }
+
+  const trackerId = document.getElementById('modal-tracker-id').value.trim();
+  const currentDisplayName = document.getElementById('modal-display-name').value.trim();
+  const targetLabel = currentDisplayName || (trackerId ? getTrackerDisplayName(trackerId) : 'tracker');
+
+  const setBtn = document.getElementById('btn-modal-copy-set');
+  if (setBtn) {
+    setBtn.disabled = true;
+    setBtn.textContent = 'Saving...';
+  }
+
+  try {
+    if (selectedSource === '__empty_fallback__') {
+      applyRuleSettingsToModal({
+        enabled: false,
+        cancel_completed_on_first_scan: false,
+        cancel_on_completed: false,
+        notify_stalled_download_enabled: false,
+        notify_stalled_download_hours: 6,
+        cancel_stalled_download_enabled: false,
+        cancel_stalled_download_hours: 24,
+        notify_long_queued_enabled: false,
+        notify_long_queued_hours: 6,
+        use_time_rule: false,
+        max_time_minutes: 120,
+        time_metric: 'seeding_time',
+        use_ratio_rule: false,
+        max_ratio: 1.0,
+        condition_operator: 'OR',
+        keep_top_seeded_enabled: false,
+        keep_top_seeded_count: 3,
+        top_seeded_metric: 'up_speed',
+        keep_largest_enabled: false,
+        keep_largest_count: 3,
+        keep_alive_hours: 72,
+      });
+
+      if (!trackerId) {
+        showToast('Settings reset to empty fallback. Please enter a tracker hostname before saving.', 'info');
+        return;
+      }
+
+      await saveModalRule(`Reverted rule for ${targetLabel} to empty (falls back to default options).`);
+      return;
+    }
+
+    let sourceRule = null;
+    let sourceLabel = '';
+
+    if (selectedSource === '__default__') {
+      sourceRule = appState.default_rule;
+      sourceLabel = 'Global Fallback Rule';
+    } else {
+      sourceRule = (appState.trackers || []).find((t) => t.tracker_id === selectedSource);
+      sourceLabel = getTrackerDisplayName(selectedSource);
+    }
+
+    if (!sourceRule) {
+      showToast('Could not find settings for the selected source.', 'error');
+      return;
+    }
+
+    applyRuleSettingsToModal({
+      ...sourceRule,
+      enabled: true,
+    });
+
+    if (!trackerId) {
+      showToast(`Copied settings from ${sourceLabel}. Please enter a tracker hostname before saving.`, 'info');
+      return;
+    }
+
+    await saveModalRule(`Copied settings from ${sourceLabel} and saved rule for ${targetLabel}.`);
+  } finally {
+    if (setBtn) {
+      setBtn.disabled = false;
+      setBtn.textContent = 'Set';
+    }
+  }
+}
+
+async function saveModalRule(customToastMsg = null) {
   const trackerId = document.getElementById('modal-tracker-id').value.trim();
   if (!trackerId) {
     showToast('Please enter a tracker hostname or identifier.', 'error');
-    return;
+    return false;
   }
 
   const enabled = document.getElementById('modal-enabled').checked;
@@ -2105,9 +2241,14 @@ async function saveModalRule() {
     if (!resp.ok) throw new Error(data.detail || 'Failed to save rule');
     updateUI(data);
     closeRuleModal();
-    showToast(`Saved rule for ${displayNameVal || getTrackerDisplayName(trackerId)}`, 'success');
+    showToast(
+      customToastMsg || `Saved rule for ${displayNameVal || getTrackerDisplayName(trackerId)}`,
+      'success'
+    );
+    return true;
   } catch (err) {
     showToast(err.message, 'error');
+    return false;
   }
 }
 

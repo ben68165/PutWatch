@@ -854,6 +854,33 @@
           />
         </div>
 
+        <!-- Copy Settings From Another Tracker or Revert to Fallback -->
+        <div id="modal-copy-container" class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <label for="modal-copy-source" class="block text-xs font-semibold text-slate-200">Copy Settings From</label>
+            <span class="text-[10px] text-amber-400 font-medium">Auto-saves on Set</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <select
+              id="modal-copy-source"
+              class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-500 truncate"
+            >
+              <option value="" disabled selected>Select tracker settings to copy...</option>
+            </select>
+            <button
+              type="button"
+              id="btn-modal-copy-set"
+              onclick="applyAndSaveCopiedRuleSettings()"
+              class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer shrink-0 transition"
+            >
+              Set
+            </button>
+          </div>
+          <p class="text-[11px] text-slate-400">
+            Copy thresholds and conditions from another configured tracker, or revert to an empty rule that falls back to the default options.
+          </p>
+        </div>
+
         <!-- Master Enable Toggle for this Tracker -->
         <label class="flex items-center justify-between p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 cursor-pointer">
           <div>
@@ -1241,6 +1268,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.7"></script>
 </body>
 </html>

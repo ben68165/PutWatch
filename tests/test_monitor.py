@@ -468,7 +468,7 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
 
     async def test_fastapi_endpoints(self) -> None:
         import httpx
-        from app.main import app
+        from app.main import app, store
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -515,6 +515,53 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
             r_index = await client.get("/")
             self.assertEqual(r_index.status_code, 200)
             self.assertIn("PutWatch", r_index.text)
+
+            # Test tracker rule save (specific settings)
+            r_save_tracker = await client.post(
+                "/api/trackers",
+                json={
+                    "tracker_id": "custom.tracker.org",
+                    "display_name": "Custom Tracker",
+                    "enabled": True,
+                    "use_time_rule": True,
+                    "max_time_minutes": 180,
+                    "use_ratio_rule": True,
+                    "max_ratio": 2.5,
+                },
+            )
+            self.assertEqual(r_save_tracker.status_code, 200)
+            saved_trackers = {
+                t["tracker_id"]: t for t in r_save_tracker.json()["trackers"]
+            }
+            self.assertIn("custom.tracker.org", saved_trackers)
+            self.assertTrue(saved_trackers["custom.tracker.org"]["enabled"])
+            self.assertEqual(saved_trackers["custom.tracker.org"]["max_ratio"], 2.5)
+
+            # Test reverting tracker rule back to empty fallback (disabled rule)
+            r_revert_tracker = await client.post(
+                "/api/trackers",
+                json={
+                    "tracker_id": "custom.tracker.org",
+                    "display_name": "Custom Tracker",
+                    "enabled": False,
+                    "use_time_rule": False,
+                    "use_ratio_rule": False,
+                },
+            )
+            self.assertEqual(r_revert_tracker.status_code, 200)
+            reverted_trackers = {
+                t["tracker_id"]: t for t in r_revert_tracker.json()["trackers"]
+            }
+            self.assertFalse(reverted_trackers["custom.tracker.org"]["enabled"])
+
+            # Verify that transfers with this reverted tracker fall back to default rule when default rule is enabled
+            cfg_now = store.get()
+            cfg_now.default_rule.enabled = True
+            store.save(cfg_now)
+            matched_id, matched_r = find_matching_rule(
+                [("custom.tracker.org", "udp://custom.tracker.org:1337")], cfg_now
+            )
+            self.assertEqual(matched_r.tracker_id, "__default__")
 
 
 if __name__ == "__main__":
