@@ -11,6 +11,7 @@ let appState = {
 let currentTab = 'transfers';
 let currentTransferGrouping = 'none';
 let expandedTransferGroups = new Set();
+let expandedTransferTrackers = new Set();
 let currentLogGrouping = 'none';
 let expandedLogGroups = new Set();
 let isTransfersHeaderCompact = false;
@@ -727,6 +728,34 @@ function updateTransferGroupButtonsUI() {
   }
 }
 
+function toggleTransferTrackers(transferId) {
+  const container = document.getElementById(`extra-trackers-${transferId}`);
+  const label = document.getElementById(`label-expand-trackers-${transferId}`);
+  const numId = Number(transferId);
+  const isExpanded = expandedTransferTrackers.has(numId);
+  const extraCount = container ? container.dataset.count || '' : '';
+
+  if (isExpanded) {
+    expandedTransferTrackers.delete(numId);
+    if (container) {
+      container.classList.add('hidden');
+      container.classList.remove('inline-flex', 'flex-wrap', 'items-center', 'gap-2');
+    }
+    if (label) {
+      label.textContent = `+${extraCount} more trackers ▼`;
+    }
+  } else {
+    expandedTransferTrackers.add(numId);
+    if (container) {
+      container.classList.remove('hidden');
+      container.classList.add('inline-flex', 'flex-wrap', 'items-center', 'gap-2');
+    }
+    if (label) {
+      label.textContent = `Hide ${extraCount} other trackers ▲`;
+    }
+  }
+}
+
 function renderSingleTransferCardHtml(t, hideNames) {
   const ev = t.evaluation || {};
   const ratio = Number(t.current_ratio || 0).toFixed(2);
@@ -738,28 +767,84 @@ function renderSingleTransferCardHtml(t, hideNames) {
   const isNotified = Boolean(ev.notification_active);
   const statusUpper = String(t.status || '').toUpperCase();
 
-  const trackerBadges = trackersList
-    .map((tr) => {
-      const trId = tr.tracker_id;
-      const trLabel = getTrackerDisplayName(trId);
-      const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
-      const isEnabled = configuredRule && configuredRule.enabled;
-      return `
+  const renderBadge = (tr) => {
+    const trId = tr.tracker_id;
+    const trLabel = getTrackerDisplayName(trId);
+    const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === trId);
+    const isEnabled = Boolean(configuredRule && configuredRule.enabled);
+    return `
+      <button
+        onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
+        title="Click to configure rule for ${escapeHtml(trLabel)}"
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+          isEnabled
+            ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+            : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
+        }"
+      >
+        <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
+        <span>${escapeHtml(trLabel)}</span>
+        <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
+      </button>`;
+  };
+
+  const enabledTrackers = trackersList.filter((tr) => {
+    const configuredRule = (appState.trackers || []).find((r) => r.tracker_id === tr.tracker_id);
+    return Boolean(configuredRule && configuredRule.enabled);
+  });
+
+  const isExpanded = expandedTransferTrackers.has(Number(t.id));
+  let trackerBadges = '';
+
+  if (enabledTrackers.length > 0) {
+    const enabledBadgesHtml = enabledTrackers.map(renderBadge).join('');
+    const extraTrackers = trackersList.filter(
+      (tr) => !enabledTrackers.some((e) => e.tracker_id === tr.tracker_id)
+    );
+
+    if (extraTrackers.length > 0) {
+      const extraBadgesHtml = extraTrackers.map(renderBadge).join('');
+      trackerBadges = `
+        ${enabledBadgesHtml}
         <button
-          onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
-          title="Click to configure rule for ${escapeHtml(trLabel)}"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
-            isEnabled
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-              : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
-          }"
+          type="button"
+          id="btn-expand-trackers-${t.id}"
+          onclick="toggleTransferTrackers(${Number(t.id)})"
+          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
+          title="Click to ${isExpanded ? 'hide' : 'show'} further attached trackers"
         >
-          <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
-          <span>${escapeHtml(trLabel)}</span>
-          <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
-        </button>`;
-    })
-    .join('');
+          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} other trackers ▲` : `+${extraTrackers.length} more trackers ▼`}</span>
+        </button>
+        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-2' : 'hidden'}">
+          ${extraBadgesHtml}
+        </span>`;
+    } else {
+      trackerBadges = enabledBadgesHtml;
+    }
+  } else {
+    // No tracker with an enabled rule on this transfer: show primary tracker and expand button if multiple
+    if (trackersList.length > 1) {
+      const primaryBadgeHtml = renderBadge(trackersList[0]);
+      const extraTrackers = trackersList.slice(1);
+      const extraBadgesHtml = extraTrackers.map(renderBadge).join('');
+      trackerBadges = `
+        ${primaryBadgeHtml}
+        <button
+          type="button"
+          id="btn-expand-trackers-${t.id}"
+          onclick="toggleTransferTrackers(${Number(t.id)})"
+          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
+          title="Click to ${isExpanded ? 'hide' : 'show'} further attached trackers"
+        >
+          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} other trackers ▲` : `+${extraTrackers.length} more trackers ▼`}</span>
+        </button>
+        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-2' : 'hidden'}">
+          ${extraBadgesHtml}
+        </span>`;
+    } else {
+      trackerBadges = trackersList.map(renderBadge).join('');
+    }
+  }
 
   const protectionBadge = ev.protection_active && ev.protection_label
     ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
@@ -1398,6 +1483,65 @@ function renderTrackerCardHtml(r, isDefault = false) {
     </div>`;
 }
 
+function renderDiscoveredDisabledTrackerCardHtml(r) {
+  const displayLabel = getTrackerDisplayName(r.tracker_id);
+  return `
+    <div class="bg-slate-900/60 border border-slate-800/80 hover:border-slate-700/80 rounded-xl p-3 flex flex-col justify-between gap-2.5 transition">
+      <div class="space-y-1.5 min-w-0">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0"></span>
+              <span class="font-bold text-xs sm:text-sm text-slate-200 truncate" title="${escapeHtml(r.tracker_id)}">
+                ${escapeHtml(displayLabel)}
+              </span>
+              <span class="px-1.5 py-0.5 text-[9px] rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 shrink-0">
+                Auto-Discovered
+              </span>
+            </div>
+            ${
+              r.sample_announce_url
+                ? `<div class="text-[10px] text-slate-500 font-mono truncate mt-0.5" title="${escapeHtml(r.sample_announce_url)}">${escapeHtml(r.sample_announce_url)}</div>`
+                : ''
+            }
+          </div>
+          <button
+            onclick="quickToggleRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-0.5 rounded-full text-[10px] font-bold border transition cursor-pointer shrink-0 bg-slate-800 text-slate-400 border-slate-700 hover:text-emerald-300 hover:border-emerald-500/40"
+            title="Click to enable rule"
+          >
+            ○ Disabled
+          </button>
+        </div>
+        <div class="text-[11px] text-slate-400 flex items-center gap-1.5">
+          <span class="text-purple-300/85 font-medium">Global Fallback Rule applies</span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs">
+        <div class="text-slate-400 text-[11px] flex items-center gap-2">
+          <span>Active: <strong class="text-slate-200">${r.matched_transfers_count || 0}</strong></span>
+          <span>Canceled: <strong class="text-amber-400/80">${r.canceled_transfers_count || 0}</strong></span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button
+            onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-1 rounded-md bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 text-[11px] transition cursor-pointer"
+            title="Remove tracker from list"
+          >
+            Delete
+          </button>
+          <button
+            onclick="openRuleModal(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold text-[11px] transition cursor-pointer"
+          >
+            Configure
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderTrackers() {
   const defaultContainer = document.getElementById('default-rule-container');
   if (appState.default_rule) {
@@ -1405,6 +1549,11 @@ function renderTrackers() {
   }
 
   const listEl = document.getElementById('trackers-list');
+  const discoveredSection = document.getElementById('discovered-trackers-section');
+  const discoveredListEl = document.getElementById('discovered-trackers-list');
+  const configuredCountEl = document.getElementById('configured-trackers-count');
+  const discoveredCountEl = document.getElementById('discovered-trackers-count');
+
   const trackerSearchInput = document.getElementById('tracker-search');
   const clearTrackerBtn = document.getElementById('btn-clear-tracker-search');
   const rawTrackerQuery = trackerSearchInput?.value || '';
@@ -1417,7 +1566,7 @@ function renderTrackers() {
   }
 
   const query = rawTrackerQuery.trim().toLowerCase();
-  const trackers = (appState.trackers || []).filter((r) => {
+  const allTrackers = (appState.trackers || []).filter((r) => {
     if (!query) return true;
     return (
       String(r.tracker_id || '').toLowerCase().includes(query) ||
@@ -1426,26 +1575,64 @@ function renderTrackers() {
     );
   });
 
-  if (trackers.length === 0) {
-    listEl.innerHTML = `
-      <div class="col-span-full bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
-        <div class="text-slate-300 font-semibold">No Trackers Discovered Yet</div>
-        <p class="text-xs text-slate-400 max-w-lg mx-auto">
-          Click <strong>"Discover from Active Transfers"</strong> while you have active transfers on Put.io to automatically populate your trackers, or add a tracker hostname manually.
-        </p>
-        <div class="flex justify-center gap-2">
-          <button onclick="scanNow()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white cursor-pointer">
-            Scan Active Transfers
-          </button>
-          <button onclick="openRuleModal(null)" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-xs font-semibold text-slate-950 cursor-pointer">
-            + Add Tracker Manually
-          </button>
-        </div>
-      </div>`;
-    return;
+  // Separate configured/enabled trackers from discovered & disabled trackers
+  const configuredTrackers = allTrackers.filter((r) => r.enabled || !r.discovered_from_transfers);
+  const discoveredDisabledTrackers = allTrackers.filter((r) => !r.enabled && r.discovered_from_transfers);
+
+  if (configuredCountEl) {
+    configuredCountEl.textContent = `(${configuredTrackers.length})`;
+  }
+  if (discoveredCountEl) {
+    discoveredCountEl.textContent = `(${discoveredDisabledTrackers.length})`;
   }
 
-  listEl.innerHTML = trackers.map((r) => renderTrackerCardHtml(r, false)).join('');
+  // Render Configured Trackers (Top Section)
+  if (configuredTrackers.length === 0) {
+    if (discoveredDisabledTrackers.length === 0 && !query) {
+      listEl.innerHTML = `
+        <div class="col-span-full bg-slate-900/60 border border-slate-800 rounded-xl p-8 text-center space-y-3">
+          <div class="text-slate-300 font-semibold">No Trackers Discovered Yet</div>
+          <p class="text-xs text-slate-400 max-w-lg mx-auto">
+            Click <strong>"Discover from Active Transfers"</strong> while you have active transfers on Put.io to automatically populate your trackers, or add a tracker hostname manually.
+          </p>
+          <div class="flex justify-center gap-2">
+            <button onclick="scanNow()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white cursor-pointer">
+              Scan Active Transfers
+            </button>
+            <button onclick="openRuleModal(null)" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-xs font-semibold text-slate-950 cursor-pointer">
+              + Add Tracker Manually
+            </button>
+          </div>
+        </div>`;
+    } else if (query) {
+      listEl.innerHTML = `
+        <div class="col-span-full bg-slate-900/60 border border-slate-800 rounded-xl p-6 text-center text-xs text-slate-500">
+          No configured tracker rules match "${escapeHtml(query)}".
+        </div>`;
+    } else {
+      listEl.innerHTML = `
+        <div class="col-span-full bg-slate-900/60 border border-slate-800 rounded-xl p-6 text-center space-y-2">
+          <div class="text-slate-300 font-semibold text-sm">No Specific Rules Configured</div>
+          <p class="text-xs text-slate-400 max-w-md mx-auto">
+            All transfers are currently evaluated against the <strong>Global Fallback Rule</strong> above. Configure specific rules below to customize cancellation per tracker.
+          </p>
+        </div>`;
+    }
+  } else {
+    listEl.innerHTML = configuredTrackers.map((r) => renderTrackerCardHtml(r, false)).join('');
+  }
+
+  // Render Discovered But Disabled Trackers (Bottom Section)
+  if (discoveredSection && discoveredListEl) {
+    if (discoveredDisabledTrackers.length === 0) {
+      discoveredSection.classList.add('hidden');
+    } else {
+      discoveredSection.classList.remove('hidden');
+      discoveredListEl.innerHTML = discoveredDisabledTrackers
+        .map((r) => renderDiscoveredDisabledTrackerCardHtml(r))
+        .join('');
+    }
+  }
 }
 
 function toggleLogGroupBy(mode) {

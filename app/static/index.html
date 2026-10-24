@@ -393,10 +393,13 @@
       <!-- Default / Catch-All Fallback Rule Card -->
       <div id="default-rule-container"></div>
 
-      <!-- Discovered & Configured Trackers Grid -->
+      <!-- Configured Tracker Rules Grid -->
       <div class="space-y-3">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Discovered &amp; Configured Trackers</h3>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Configured Tracker Rules</h3>
+            <span id="configured-trackers-count" class="text-xs text-amber-400 font-semibold"></span>
+          </div>
           <div class="relative flex items-center">
             <input
               type="text"
@@ -419,6 +422,20 @@
           </div>
         </div>
         <div id="trackers-list" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- Discovered Inactive Trackers Section (Separate Bottom Section) -->
+      <div id="discovered-trackers-section" class="hidden space-y-3 pt-6 border-t border-slate-800/80">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">Discovered Inactive Trackers</h3>
+            <span id="discovered-trackers-count" class="text-xs text-slate-500 font-semibold"></span>
+          </div>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Auto-discovered from your Put.io transfers without active specific rules. Transfers using these trackers fall back to the Global Fallback Rule.
+          </p>
+        </div>
+        <div id="discovered-trackers-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
       </div>
     </section>
 
@@ -1268,6 +1285,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=2.7"></script>
+  <script src="/static/app.js?v=2.8"></script>
 </body>
 </html>
