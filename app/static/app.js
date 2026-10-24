@@ -739,19 +739,19 @@ function toggleTransferTrackers(transferId) {
     expandedTransferTrackers.delete(numId);
     if (container) {
       container.classList.add('hidden');
-      container.classList.remove('inline-flex', 'flex-wrap', 'items-center', 'gap-2');
+      container.classList.remove('inline-flex', 'flex-wrap', 'items-center', 'gap-1.5');
     }
     if (label) {
-      label.textContent = `+${extraCount} more trackers ▼`;
+      label.textContent = `+${extraCount} more ▼`;
     }
   } else {
     expandedTransferTrackers.add(numId);
     if (container) {
       container.classList.remove('hidden');
-      container.classList.add('inline-flex', 'flex-wrap', 'items-center', 'gap-2');
+      container.classList.add('inline-flex', 'flex-wrap', 'items-center', 'gap-1.5');
     }
     if (label) {
-      label.textContent = `Hide ${extraCount} other trackers ▲`;
+      label.textContent = `Hide ${extraCount} ▲`;
     }
   }
 }
@@ -776,15 +776,15 @@ function renderSingleTransferCardHtml(t, hideNames) {
       <button
         onclick="openRuleModal(${JSON.stringify(trId).replace(/"/g, '&quot;')})"
         title="Click to configure rule for ${escapeHtml(trLabel)}"
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+        class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border transition cursor-pointer ${
           isEnabled
             ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
             : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-300'
         }"
       >
         <span class="w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-amber-400' : 'bg-slate-500'}"></span>
-        <span>${escapeHtml(trLabel)}</span>
-        <span class="text-[10px] text-slate-400 underline ml-1">Rule &⚙️</span>
+        <span class="truncate max-w-[130px] sm:max-w-[180px]">${escapeHtml(trLabel)}</span>
+        <span class="text-[10px] opacity-60 ml-0.5 hover:opacity-100">⚙</span>
       </button>`;
   };
 
@@ -810,12 +810,12 @@ function renderSingleTransferCardHtml(t, hideNames) {
           type="button"
           id="btn-expand-trackers-${t.id}"
           onclick="toggleTransferTrackers(${Number(t.id)})"
-          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
+          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
           title="Click to ${isExpanded ? 'hide' : 'show'} further attached trackers"
         >
-          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} other trackers ▲` : `+${extraTrackers.length} more trackers ▼`}</span>
+          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} ▲` : `+${extraTrackers.length} more ▼`}</span>
         </button>
-        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-2' : 'hidden'}">
+        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-1.5' : 'hidden'}">
           ${extraBadgesHtml}
         </span>`;
     } else {
@@ -833,12 +833,12 @@ function renderSingleTransferCardHtml(t, hideNames) {
           type="button"
           id="btn-expand-trackers-${t.id}"
           onclick="toggleTransferTrackers(${Number(t.id)})"
-          class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
+          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
           title="Click to ${isExpanded ? 'hide' : 'show'} further attached trackers"
         >
-          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} other trackers ▲` : `+${extraTrackers.length} more trackers ▼`}</span>
+          <span id="label-expand-trackers-${t.id}">${isExpanded ? `Hide ${extraTrackers.length} ▲` : `+${extraTrackers.length} more ▼`}</span>
         </button>
-        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-2' : 'hidden'}">
+        <span id="extra-trackers-${t.id}" data-count="${extraTrackers.length}" class="${isExpanded ? 'inline-flex flex-wrap items-center gap-1.5' : 'hidden'}">
           ${extraBadgesHtml}
         </span>`;
     } else {
@@ -847,28 +847,30 @@ function renderSingleTransferCardHtml(t, hideNames) {
   }
 
   const protectionBadge = ev.protection_active && ev.protection_label
-    ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
+    ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
          ★ Protected: ${escapeHtml(ev.protection_label)}
        </span>`
     : '';
 
   const notificationBadge = isNotified
-    ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/50">
+    ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/50">
          ⚠ ${escapeHtml(ev.notification_label || 'Notified')}
        </span>`
     : '';
 
   const notificationBannerHtml = isNotified
-    ? `<div class="mb-3 px-3 py-2 rounded-lg bg-orange-500/15 border border-orange-500/40 flex flex-wrap items-center justify-between gap-2 text-xs text-orange-200">
-         <div class="flex items-center gap-2 font-semibold">
+    ? `<div class="mb-2 px-2.5 py-1 rounded-lg bg-orange-500/15 border border-orange-500/40 flex flex-wrap items-center justify-between gap-2 text-[11px] text-orange-200">
+         <div class="flex items-center gap-1.5 font-semibold">
            <span class="text-orange-400">⚠ ${escapeHtml(ev.notification_label || 'Transfer Notification')}:</span>
            <span>${escapeHtml(ev.notification_reason || '')}</span>
          </div>
-         <span class="px-2 py-0.5 rounded bg-orange-500/20 text-[10px] font-bold uppercase tracking-wider text-orange-300">Pinned to Top</span>
+         <span class="px-1.5 py-0.5 rounded bg-orange-500/20 text-[10px] font-bold uppercase tracking-wider text-orange-300">Pinned</span>
        </div>`
     : '';
 
-  let ruleProgressHtml = '';
+  let ruleBadgesHtml = '';
+  let ruleProgressBarsHtml = '';
+
   if (ev.rule_enabled) {
     const isStalledDownloadEval = statusUpper === 'DOWNLOADING' && Boolean(ev.cancel_stalled_download_enabled);
     const barColor = ev.protection_active
@@ -877,86 +879,78 @@ function renderSingleTransferCardHtml(t, hideNames) {
       ? 'bg-orange-500'
       : 'bg-amber-500';
     const timeLabel = ev.protection_active
-      ? `Keep-Alive Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+      ? `Keep-Alive (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
       : isStalledDownloadEval
-      ? `Stalled Download Cancel Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+      ? `Stalled Download Cancel (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
       : ev.cancel_on_completed
-      ? 'Immediate Cancel on Download Complete'
+      ? 'Immediate Cancel on Complete'
       : `Time Progress (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`;
 
-    const timeBar = ev.use_time_rule
-      ? `
-        <div class="space-y-1">
-          <div class="flex justify-between text-[11px]">
-            <span class="text-slate-400">${timeLabel}</span>
-            <span class="font-mono text-slate-200">${ev.time_progress_pct}% ${
-              ev.remaining_seconds !== null && ev.remaining_seconds > 0
-                ? `(${formatDuration(ev.remaining_seconds)} left)`
-                : ev.remaining_seconds === 0
-                ? '(Reached!)'
-                : ''
-            }</span>
-          </div>
-          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-            <div class="h-full ${barColor} transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
-          </div>
-        </div>`
-      : '';
+    ruleBadgesHtml = `
+      <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+        <span class="group relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold text-[10px] cursor-help border border-amber-500/40 select-none">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+          <span>Active Rule</span>
+          <svg class="w-3 h-3 text-amber-400/80" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+          </svg>
+          <!-- Tooltip on Hover -->
+          <span class="pointer-events-none absolute bottom-full right-0 sm:right-auto sm:left-0 mb-2 hidden group-hover:block z-30 w-max max-w-xs sm:max-w-md p-2.5 rounded-lg bg-slate-950 text-slate-200 text-xs font-normal border border-slate-700 shadow-2xl shadow-black/90 whitespace-normal leading-relaxed">
+            <span class="text-amber-300 font-semibold block mb-0.5 text-[11px]">Active Rule:</span>
+            ${escapeHtml(ev.rule_summary)}
+            <span class="absolute top-full right-4 sm:right-auto sm:left-4 border-4 border-transparent border-t-slate-700"></span>
+          </span>
+        </span>
+        ${protectionBadge}
+        ${!ev.eligible_status ? '<span class="text-[10px] text-slate-500">(Waiting for SEEDING)</span>' : ''}
+        ${ev.should_cancel ? '<span class="text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/30 px-1.5 py-0.5 rounded">Threshold Reached</span>' : ''}
+      </div>`;
 
-    const ratioBar = ev.use_ratio_rule
-      ? `
-        <div class="space-y-1">
-          <div class="flex justify-between text-[11px]">
-            <span class="text-slate-400">Ratio Progress (${ratio} / ${Number(ev.target_ratio).toFixed(2)})</span>
-            <span class="font-mono text-slate-200">${ev.ratio_progress_pct}%</span>
-          </div>
-          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-            <div class="h-full bg-emerald-500 transition-all" style="width: ${Math.min(100, ev.ratio_progress_pct)}%"></div>
-          </div>
-        </div>`
-      : '';
+    if (ev.use_time_rule || ev.use_ratio_rule) {
+      const timeBar = ev.use_time_rule
+        ? `
+          <div class="space-y-0.5">
+            <div class="flex justify-between items-center text-[10px]">
+              <span class="text-slate-400 truncate">${timeLabel}</span>
+              <span class="font-mono text-slate-300 font-medium shrink-0 ml-2">${ev.time_progress_pct}% ${
+                ev.remaining_seconds !== null && ev.remaining_seconds > 0
+                  ? `(${formatDuration(ev.remaining_seconds)} left)`
+                  : ev.remaining_seconds === 0
+                  ? '(Reached!)'
+                  : ''
+              }</span>
+            </div>
+            <div class="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div class="h-full ${barColor} transition-all" style="width: ${Math.min(100, ev.time_progress_pct)}%"></div>
+            </div>
+          </div>`
+        : '';
 
-    ruleProgressHtml = `
-      <div class="mt-3 pt-3 border-t border-slate-800/80 space-y-2">
-        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="group relative inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold text-[11px] cursor-help border border-amber-500/40 select-none">
-              <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-              <span>Active Rule</span>
-              <svg class="w-3 h-3 text-amber-400/80" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-              </svg>
-              <!-- Tooltip on Hover -->
-              <span class="pointer-events-none absolute bottom-full left-0 mb-2 hidden group-hover:block z-30 w-max max-w-xs sm:max-w-md p-2.5 rounded-lg bg-slate-950 text-slate-200 text-xs font-normal border border-slate-700 shadow-2xl shadow-black/90 whitespace-normal leading-relaxed">
-                <span class="text-amber-300 font-semibold block mb-0.5 text-[11px]">Active Rule:</span>
-                ${escapeHtml(ev.rule_summary)}
-                <span class="absolute top-full left-4 border-4 border-transparent border-t-slate-700"></span>
-              </span>
-            </span>
-            ${protectionBadge}
-            ${
-              !ev.eligible_status
-                ? '<span class="text-[11px] text-slate-500">(Waiting for SEEDING state)</span>'
-                : ''
-            }
-          </div>
-          ${
-            ev.should_cancel
-              ? '<span class="text-xs font-bold text-red-400">Threshold Reached</span>'
-              : ''
-          }
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      const ratioBar = ev.use_ratio_rule
+        ? `
+          <div class="space-y-0.5">
+            <div class="flex justify-between items-center text-[10px]">
+              <span class="text-slate-400 truncate">Ratio Progress (${ratio} / ${Number(ev.target_ratio).toFixed(2)})</span>
+              <span class="font-mono text-slate-300 font-medium shrink-0 ml-2">${ev.ratio_progress_pct}%</span>
+            </div>
+            <div class="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div class="h-full bg-emerald-500 transition-all" style="width: ${Math.min(100, ev.ratio_progress_pct)}%"></div>
+            </div>
+          </div>`
+        : '';
+
+      ruleProgressBarsHtml = `
+        <div class="pt-1.5 border-t border-slate-800/40 grid grid-cols-1 ${ev.use_time_rule && ev.use_ratio_rule ? 'sm:grid-cols-2' : ''} gap-2">
           ${timeBar}
           ${ratioBar}
-        </div>
-      </div>`;
+        </div>`;
+    }
   } else {
-    ruleProgressHtml = `
-      <div class="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
-        <span>No active auto-cancel rule for <strong class="text-slate-300">${escapeHtml(primaryTrackerLabel)}</strong></span>
-        <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer">
-          + Set Rule for ${escapeHtml(primaryTrackerLabel)}
+    ruleBadgesHtml = `
+      <div class="flex items-center gap-1.5 text-[11px] text-slate-500 shrink-0">
+        <span>No active rule for <strong class="text-slate-400 font-medium">${escapeHtml(primaryTrackerLabel)}</strong></span>
+        <button onclick="openRuleModal(${JSON.stringify(t.primary_tracker).replace(/"/g, '&quot;')})" class="text-amber-400 hover:underline font-medium cursor-pointer ml-1">
+          + Set Rule
         </button>
       </div>`;
   }
@@ -968,50 +962,62 @@ function renderSingleTransferCardHtml(t, hideNames) {
     : 'bg-slate-900 border border-slate-800 hover:border-slate-700/80';
 
   return `
-    <div class="${cardBorderClasses} rounded-xl p-4 transition">
+    <div class="${cardBorderClasses} rounded-xl p-3 sm:p-3.5 transition space-y-2">
       ${notificationBannerHtml}
-      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div class="space-y-1.5 min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-2">
-            ${getStatusBadgeHtml(t.status)}
-            ${notificationBadge}
-            <h3 class="font-semibold text-sm sm:text-base text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
-              ${escapeHtml(t.name)}
-            </h3>
-          </div>
-          <div class="flex flex-wrap items-center gap-2 pt-0.5">
-            <span class="text-xs text-slate-400">Identified Tracker(s):</span>
-            ${trackerBadges}
-          </div>
+
+      <!-- Top Row: Status, Name, Metrics Pills & Cancel -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          ${getStatusBadgeHtml(t.status)}
+          ${notificationBadge}
+          <h3 class="font-semibold text-xs sm:text-sm text-white truncate transition ${nameBlurClasses}" ${nameTitleAttr}>
+            ${escapeHtml(t.name)}
+          </h3>
         </div>
 
-        <!-- Metrics & Manual Cancel -->
-        <div class="flex flex-wrap items-center gap-4 text-xs sm:text-sm shrink-0">
-          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-            <span class="text-slate-400 text-xs block">Seeding Time</span>
-            <span class="font-mono font-semibold text-white">${formatDuration(seedingSecs)}</span>
-          </div>
-          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-            <span class="text-slate-400 text-xs block">Share Ratio</span>
-            <span class="font-mono font-semibold text-emerald-400">${ratio}</span>
-          </div>
-          <div class="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
-            <span class="text-slate-400 text-xs block">Size / Speed</span>
-            <span class="font-mono text-slate-200 text-xs">
-              ${formatBytes(t.size)}
-              ${upSpeed > 0 ? ` &bull; &uarr;${formatBytes(upSpeed)}/s` : ''}
-              ${downSpeed > 0 ? ` &bull; &darr;${formatBytes(downSpeed)}/s` : ''}
-            </span>
-          </div>
+        <!-- Inline Metrics Pills & Action -->
+        <div class="flex flex-wrap items-center gap-1.5 shrink-0 self-start md:self-auto">
+          <!-- Size & Speed -->
+          <span class="inline-flex items-center gap-1 font-mono text-[11px] text-slate-300 bg-slate-950/80 px-2 py-0.5 rounded-md border border-slate-800" title="Transfer size and active transfer speeds">
+            <span>${formatBytes(t.size)}</span>
+            ${upSpeed > 0 ? `<span class="text-emerald-400 font-semibold ml-0.5">&uarr;${formatBytes(upSpeed)}/s</span>` : ''}
+            ${downSpeed > 0 ? `<span class="text-sky-400 font-semibold ml-0.5">&darr;${formatBytes(downSpeed)}/s</span>` : ''}
+          </span>
+
+          <!-- Ratio -->
+          <span class="inline-flex items-center gap-1 font-mono text-[11px] bg-slate-950/80 px-2 py-0.5 rounded-md border border-slate-800" title="Current share ratio">
+            <span class="text-slate-400 text-[10px]">Ratio:</span>
+            <span class="font-semibold ${Number(ratio) >= 1 ? 'text-emerald-400' : 'text-slate-200'}">${ratio}</span>
+          </span>
+
+          <!-- Seed Time -->
+          <span class="inline-flex items-center gap-1 font-mono text-[11px] bg-slate-950/80 px-2 py-0.5 rounded-md border border-slate-800" title="Elapsed seeding time">
+            <span class="text-slate-400 text-[10px]">Seed:</span>
+            <span class="font-semibold text-slate-200">${formatDuration(seedingSecs)}</span>
+          </span>
+
+          <!-- Cancel Button -->
           <button
             onclick="manualCancelTransfer(${Number(t.id)}, ${JSON.stringify(String(t.name || '')).replace(/"/g, '&quot;')})"
-            class="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold transition cursor-pointer"
+            class="px-2.5 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-[11px] font-semibold transition cursor-pointer shrink-0 ml-0.5"
+            title="Cancel & remove transfer from Put.io"
           >
-            Cancel &amp; Remove
+            Cancel
           </button>
         </div>
       </div>
-      ${ruleProgressHtml}
+
+      <!-- Second Row: Trackers (Left) & Rule / Protection Status (Right) -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-slate-800/50 text-xs">
+        <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+          <span class="text-[11px] text-slate-400 shrink-0">Trackers:</span>
+          ${trackerBadges}
+        </div>
+        ${ruleBadgesHtml}
+      </div>
+
+      <!-- Third Row: High-Density Progress Bars (if rules active) -->
+      ${ruleProgressBarsHtml}
     </div>`;
 }
 
