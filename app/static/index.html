@@ -136,32 +136,64 @@
 
     <!-- Summary KPI Bar -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div
+        id="kpi-box-transfers"
+        role="link"
+        tabindex="0"
+        title="Open Active Transfers"
+        onclick="switchTab('transfers')"
+        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchTab('transfers'); }"
+        class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 cursor-pointer select-none transition hover:border-amber-500/50 hover:bg-slate-900 focus:outline-none focus-visible:border-amber-500"
+      >
         <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Active Transfers</div>
         <div class="mt-1 flex items-baseline justify-between">
           <span id="kpi-transfers" class="text-2xl font-bold text-white">0</span>
           <span id="kpi-seeding" class="text-xs text-emerald-400">0 seeding</span>
         </div>
       </div>
-      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div
+        id="kpi-box-trackers"
+        role="link"
+        tabindex="0"
+        title="Open Tracker Config &amp; Rules"
+        onclick="switchTab('trackers')"
+        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchTab('trackers'); }"
+        class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 cursor-pointer select-none transition hover:border-amber-500/50 hover:bg-slate-900 focus:outline-none focus-visible:border-amber-500"
+      >
         <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Discovered Trackers</div>
         <div class="mt-1 flex items-baseline justify-between">
           <span id="kpi-trackers" class="text-2xl font-bold text-white">0</span>
           <span id="kpi-active-rules" class="text-xs text-amber-400">0 active rules</span>
         </div>
       </div>
-      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div
+        id="kpi-box-logs"
+        role="link"
+        tabindex="0"
+        title="Open Cancellation Log"
+        onclick="switchTab('logs')"
+        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchTab('logs'); }"
+        class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 cursor-pointer select-none transition hover:border-amber-500/50 hover:bg-slate-900 focus:outline-none focus-visible:border-amber-500"
+      >
         <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Transfers Canceled</div>
         <div class="mt-1 flex items-baseline justify-between">
           <span id="kpi-canceled" class="text-2xl font-bold text-white">0</span>
           <span class="text-xs text-slate-500">via rules &amp; manual</span>
         </div>
       </div>
-      <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-4">
+      <div
+        id="kpi-box-settings"
+        role="link"
+        tabindex="0"
+        title="Open Service Settings"
+        onclick="switchTab('settings')"
+        onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); switchTab('settings'); }"
+        class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 cursor-pointer select-none transition hover:border-amber-500/50 hover:bg-slate-900 focus:outline-none focus-visible:border-amber-500"
+      >
         <div class="text-xs font-medium text-slate-400 uppercase tracking-wider">Check Interval</div>
         <div class="mt-1 flex items-baseline justify-between">
           <span id="kpi-interval" class="text-2xl font-bold text-white">5m</span>
-          <button onclick="toggleMonitoringQuick()" id="btn-quick-toggle" class="text-xs text-amber-400 hover:underline cursor-pointer">
+          <button onclick="event.stopPropagation(); toggleMonitoringQuick()" onkeydown="event.stopPropagation()" id="btn-quick-toggle" class="text-xs text-amber-400 hover:underline cursor-pointer">
             Pause Monitor
           </button>
         </div>
