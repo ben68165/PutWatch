@@ -45,7 +45,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=PUTWATCH_APP_NAME,
-    version="1.0.0",
+    version="1.0.1",
     description=PUTWATCH_APP_DESCRIPTION,
     lifespan=lifespan,
 )
@@ -162,7 +162,7 @@ async def get_state() -> Dict[str, Any]:
             "rule_summary": describe_rule(cfg.default_rule),
         },
         "activity_log": [
-            entry.model_dump(mode="json") for entry in cfg.activity_log[:100]
+            entry.model_dump(mode="json") for entry in cfg.activity_log[:500]
         ],
     }
 
