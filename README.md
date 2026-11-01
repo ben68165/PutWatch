@@ -1,162 +1,186 @@
 # PutWatch
 
-[![Version](https://img.shields.io/badge/version-1.0.1-amber.svg)](https://github.com/ben68165/PutWatch/releases/tag/v1.0.1)
-[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
-[![Docker](https://img.shields.io/badge/docker-ready-cyan.svg)](https://hub.docker.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](./LICENSE)
+<p align="center">
+  <img src="./app/static/favicon.svg" alt="PutWatch Logo" width="72" height="72" />
+</p>
 
-**PutWatch** is a 24/7 background service and modern web application that monitors active [Put.io](https://put.io) transfers (`GET /v2/transfers/list`), automatically identifies BitTorrent trackers from transfer metadata, and cancels & cleans finished transfers based on customizable per-tracker **seeding time**, **share ratio**, and **keep-alive** rules.
+<h3 align="center">Set-and-forget seeding automation for Put.io</h3>
 
-![PutWatch Active Transfers Dashboard](./docs/screenshots/overview_transfers.png)
+<p align="center">
+  Keep your private tracker ratios healthy, reclaim transfer slots automatically, and put queue babysitting on cruise control.
+</p>
 
----
-
-## Key Features
-
-- **Automatic Tracker Identification**: Inspects active Put.io transfers via the `tracker` field, `trackers` array, and magnet link `tr=` announce parameters to automatically discover trackers.
-- **Per-Tracker Rule Engine**:
-  - **Time Limit**: Enforce maximum seeding time (`seconds_seeding`) or total transfer age in hours/minutes.
-  - **Ratio Limit**: Set target share ratio thresholds (`current_ratio`).
-  - **Boolean Operators**: Combine criteria using **OR** (*cancel when either time OR ratio is reached*) or **AND** (*cancel only when both time AND ratio are met*).
-  - **Global Fallback Rule**: Catch transfers from any unconfigured or new trackers.
-  - **Keep-Alive Protection**: Protect top-seeded or largest transfers from cancellation for dedicated seeding periods.
-- **Safe Cancellation & Cleanup**:
-  - Stops seeding via `POST /v2/transfers/cancel` and cleans entries from Put.io's transfer list via `POST /v2/transfers/clean`.
-  - **Your downloaded files in Put.io storage remain untouched.**
-- **24/7 Responsive Web GUI & Audit Log**:
-  - Live progress bars showing real-time progress toward time and ratio limits.
-  - Filter by name or tracker, group by tracker or status, sort, and toggle privacy masking.
-  - Built-in Put.io OAuth token setup plus 1-click **Put.io Device Link Code** (`app.put.io/link`).
-  - Comprehensive audit log with up to 500 retained entries and **Dry-Run (simulation)** mode.
+<p align="center">
+  <a href="https://github.com/ben68165/PutWatch/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/Release-v1.0.1-amber.svg?style=flat-square" alt="Version 1.0.1" /></a>
+  <a href="https://hub.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-0db7ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker Ready" /></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-10b981.svg?style=flat-square" alt="License MIT" /></a>
+</p>
 
 ---
 
-## Visual Feature Tour
-
-### 1. Active Transfers & Real-Time Dual Progress Bars
-Each active transfer card clearly displays live metrics (transfer speed, peers, seeds, file size, seeding time, and ratio) along with interactive dual progress bars toward the configured time and ratio limits.
-
-![Live Transfer Card with Dual Progress Bars](./docs/screenshots/feature_transfer_card.png)
-
-- **Yellow Progress Bar**: Visualizes elapsed seeding time (or transfer age) relative to target time.
-- **Green Progress Bar**: Visualizes current upload ratio relative to target ratio.
-- **Active Rule Chip**: Shows which rule is governing the transfer, with a hover tooltip explaining the exact evaluation criteria.
-- **Privacy Masking**: One-click toggle in the toolbar to blur transfer names when sharing screenshots.
+![PutWatch Modern Web Dashboard](./docs/screenshots/hero_dashboard.png)
 
 ---
 
-### 2. Flexible Per-Tracker Rule Engine (Time & Ratio Conditions)
-Open the rule modal for any tracker to define custom cancellation thresholds and specify whether conditions operate via `OR` or `AND` logic.
+## Why PutWatch?
 
-![Tracker Rule Modal](./docs/screenshots/feature_rule_modal.png)
+[Put.io](https://put.io) is unmatched for fetching torrents directly to cloud storage at gigabit speeds. But when it comes to managing active transfers, you're on your own:
 
-- **Condition Logic**:
-  - **OR (Either Reached)**: Stops transfer as soon as either time OR ratio is satisfied.
-  - **AND (Both Reached)**: Keeps transfer seeding until both time AND ratio goals are reached.
-- **Metric Options**: Measure by actual Put.io seeding duration (`seconds_seeding`) or total elapsed age since transfer creation.
-- **Immediate Finished Handling**: Option to immediately cancel and clean transfers marked as `COMPLETED` by Put.io without waiting.
-- **Stalled Download Detection**: Highlight or cancel stuck downloading transfers after a configurable delay.
-- **Keep-Alive Protection**: Exempt top seeders or largest torrents from cancellation for a specified duration.
+* **Private trackers demand discipline**: Strict rules require you to seed for 72 hours, reach a 1.5 ratio, or satisfy both conditions to maintain your account standing.
+* **Public torrents clog your queue**: Left unattended, inactive or zero-peer transfers linger endlessly and tie up your maximum concurrent transfer slots.
+* **Babysitting is tedious**: Manually monitoring progress, calculating ratios, and clicking "Cancel" dozens of times a week is pure friction.
 
----
+**PutWatch is the missing automation brain for Put.io.** Running silently 24/7 in a lightweight Docker container, it sniffs tracker domains from incoming torrents, tracks seeding duration and share ratios in real time, and cleanly cancels transfers the exact moment your conditions are met.
 
-### 3. Tracker Config & Discovered Trackers Dashboard
-View all configured tracker rules alongside newly auto-detected trackers from your active transfer queue.
-
-![Tracker Config & Rules Dashboard](./docs/screenshots/overview_trackers.png)
-
-![Configured Tracker Rule Cards](./docs/screenshots/feature_tracker_rules.png)
-
-- **Global Fallback Rule**: Default safety net for any tracker without an explicit rule.
-- **Quick Rule Copying**: Copy configuration between trackers or revert to fallback defaults with one click.
-- **Discovered Trackers**: Newly detected trackers appear automatically in the inactive list, ready to be configured.
+Best of all: **Your downloaded files are 100% safe.** PutWatch only stops the torrent and cleans Put.io's active transfer queue; your media and downloads remain permanently stored in your Put.io cloud drive.
 
 ---
 
-### 4. Cancellation Audit Log (Retains up to 500 Entries)
-Full audit trail of every canceled and cleaned transfer, including the exact trigger reason, ratio at cancellation, total seeded duration, and timestamp.
+## Core Features & Visual Tour
 
-![Cancellation Audit Log](./docs/screenshots/overview_cancellation_log.png)
+### 1. Real-Time Dual Progress at a Glance
+Stop guessing when a transfer is done seeding. PutWatch equips every active torrent with interactive dual progress bars measuring elapsed seeding time and live share ratio against your target goals.
 
-![Cancellation Log Table Close-Up](./docs/screenshots/feature_cancellation_log.png)
+![Live Transfer Cards with Dual Progress Bars](./docs/screenshots/feature_live_progress.png)
 
-- Filter by transfer title, tracker, or cancellation reason.
-- Group entries by Tracker, Status at cancel, or Result.
-- Configurable log retention (default 7 days, up to 500 entries).
-
----
-
-### 5. Settings, Authentication & Dry-Run Mode
-Configure background polling intervals, connect your Put.io account via API token or Device Link Code, and test your configuration in simulation mode before taking real actions.
-
-![Put.io Settings & Service Configuration](./docs/screenshots/overview_settings.png)
+- **Amber Progress Bar**: Live progress toward your target seeding time (or total transfer age), with dynamic time-remaining countdowns.
+- **Emerald Progress Bar**: Live upload ratio progress toward your ratio target.
+- **Live Metrics**: Real-time upload speeds, download throughput, connected swarm peers, and active rule badges.
+- **Privacy Shield**: Instant toolbar switch to mask torrent titles when taking screenshots or sharing your dashboard.
 
 ---
 
-## Deploying in Portainer (Recommended for 24/7 Server)
+### 2. Granular Per-Tracker Automation Engine
+Different trackers require different strategies. PutWatch lets you create precision rules tailored to each community, choosing whether criteria trigger via `OR` or `AND` logic.
 
-### Portainer Stack
+![Tracker Rule Builder Modal](./docs/screenshots/feature_rule_builder.png)
+
+- **Flexible Condition Logic**:
+  - `OR (Either Reached)`: Cancel as soon as either your seeding time **or** your share ratio goal is met.
+  - `AND (Both Reached)`: Keep seeding until **both** time and ratio thresholds are satisfied.
+- **Smart Metric Selection**: Evaluate by true active seeding duration (`seconds_seeding`) or total elapsed age since transfer creation.
+- **Stalled Download Safeguards**: Automatically flag or purge downloads stuck in a downloading state without active seeds.
+- **Keep-Alive Protection**: Pin your highest-seeded or largest torrents with dedicated immunity windows up to 48+ hours.
+
+---
+
+### 3. Zero-Setup Tracker Auto-Discovery & Global Fallback
+No copying tracker URLs, typing hostnames, or digging through magnet links. PutWatch automatically intercepts announce hosts directly from active transfers and lists them ready for 1-click configuration.
+
+![Tracker Config and Discovery Dashboard](./docs/screenshots/feature_auto_discovery.png)
+
+- **Automatic Tracker Sniffing**: Inspects announce URLs (`announce.php`, `announce`, UDP ports) and extracts clean root domains.
+- **Global Safety Net**: A customizable Fallback Rule automatically protects any torrent that doesn't yet have a dedicated tracker rule.
+- **One-Click Duplication**: Easily copy proven rules across trackers or revert to global defaults in seconds.
+
+---
+
+### 4. Transparent Audit Trail (Retains up to 500 Events)
+Every action taken by PutWatch is permanently recorded in a searchable, filterable cancellation history log.
+
+![Cancellation Audit Log](./docs/screenshots/feature_audit_trail.png)
+
+- **Exact Decision Logs**: See precisely why a transfer was canceled (e.g. `Ratio threshold reached: 2.04 >= 2.00`).
+- **Retained Metrics**: Audits final share ratio, total seeded duration, and timestamp.
+- **Expanded Retention**: Stores up to 500 audit events with customizable auto-pruning.
+- **Dry-Run Mode**: Test your rules safely in simulation mode before enabling live cancellations.
+
+---
+
+### 5. 10-Second Pairing & Set-and-Forget Operation
+Connecting PutWatch to your Put.io account takes less than 10 seconds. No developer accounts or secret OAuth apps required.
+
+![Put.io 1-Click Link and Engine Settings](./docs/screenshots/feature_instant_setup.png)
+
+- **Instant 1-Click Device Link**: Click **Generate PutWatch Device Code** and approve it instantly at [app.put.io/link](https://app.put.io/link).
+- **Flexible Polling Interval**: Adjust scan frequency from every 1 minute to once an hour.
+- **Auto-Cleanup**: Automatically cleans completed entries from Put.io's active list while leaving files untouched.
+
+---
+
+## Quick Start (Portainer / Docker)
+
+### Option A: Portainer Stack (Recommended)
 1. In **Portainer**, navigate to **Stacks** &rarr; **Add stack**.
-2. Paste the contents of [`docker-compose.yml`](./docker-compose.yml):
-   ```yaml
-   services:
-     putio-tracker-monitor:
-       build:
-         context: .
-         dockerfile: Dockerfile
-       container_name: putio-tracker-monitor
-       restart: unless-stopped
-       ports:
-         - "8080:8080"
-       environment:
-         - CONFIG_PATH=/data/config.json
-         - PUTIO_TOKEN=${PUTIO_TOKEN:-}
-         - PUTIO_APP_ID=${PUTIO_APP_ID:-}
-         - POLL_INTERVAL=${POLL_INTERVAL:-5}
-         - TZ=${TZ:-Europe/Berlin}
-       volumes:
-         - putio_monitor_data:/data
+2. Name the stack `putwatch` and paste the [`docker-compose.yml`](./docker-compose.yml):
 
-   volumes:
-     putio_monitor_data:
-   ```
-3. Deploy the stack.
-4. Open `http://<your-server-ip>:8080` in your web browser.
-5. In **Put.io API & Service Settings**, paste your Put.io OAuth token or click **Generate PutWatch Device Code** to link your account at [app.put.io/link](https://app.put.io/link).
+```yaml
+services:
+  putio-tracker-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: putio-tracker-monitor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - CONFIG_PATH=/data/config.json
+      - PUTIO_TOKEN=${PUTIO_TOKEN:-}
+      - POLL_INTERVAL=5
+      - TZ=Europe/Berlin
+    volumes:
+      - putio_monitor_data:/data
 
----
+volumes:
+  putio_monitor_data:
+```
 
-## Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `CONFIG_PATH` | `/data/config.json` | Path to persistent configuration and rule file |
-| `PORT` | `8080` | Web server listening port |
-| `PUTIO_TOKEN` | *(empty)* | Optional initial Put.io OAuth2 Bearer token |
-| `PUTIO_APP_ID` | *(empty)* | Optional Put.io OAuth App ID for device link authentication |
-| `POLL_INTERVAL` | `5` | Background evaluation interval in minutes |
-| `TZ` | `Europe/Berlin` | Timezone for logs and UI timestamps |
+3. Click **Deploy the stack**.
+4. Open `http://<your-server-ip>:8080` in your browser.
+5. In **Put.io API & Service Settings**, click **Generate PutWatch Device Code** to pair your account at [app.put.io/link](https://app.put.io/link).
 
 ---
 
-## Running Locally (Python 3.12+)
+### Option B: Docker CLI
 
 ```bash
-# Clone the repository
+docker run -d \
+  --name putwatch \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v putwatch_data:/data \
+  -e TZ=Europe/Berlin \
+  -e POLL_INTERVAL=5 \
+  ben68165/putwatch:latest
+```
+
+---
+
+### Option C: Local Python (3.12+)
+
+```bash
 git clone https://github.com/ben68165/PutWatch.git
 cd PutWatch
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the application
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-Open `http://localhost:8080` in your browser.
+---
+
+## Configuration Reference
+
+| Environment Variable | Default | Purpose |
+|---|---|---|
+| `CONFIG_PATH` | `/data/config.json` | Path where rules and audit logs are saved |
+| `PORT` | `8080` | Web dashboard HTTP listening port |
+| `POLL_INTERVAL` | `5` | Background evaluation frequency in minutes |
+| `PUTIO_TOKEN` | *(empty)* | Optional pre-configured Put.io OAuth2 Bearer token |
+| `PUTIO_APP_ID` | *(empty)* | Custom OAuth app ID (default uses PutWatch App ID) |
+| `TZ` | `Europe/Berlin` | System timezone for audit log timestamps |
+
+---
+
+## Safety Guarantee
+
+> [!NOTE]
+> **PutWatch will never delete your media.**
+> All operations use Put.io's `/transfers/cancel` (stop BitTorrent seeding) and `/transfers/clean` (clear transfer queue entry). Your downloaded video, music, software, and archive files in Put.io storage remain completely intact.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+Distributed under the [MIT License](./LICENSE). Open source and free forever.
