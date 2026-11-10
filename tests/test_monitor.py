@@ -433,7 +433,7 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
                 "app.monitor.PutioClient.ensure_putwatch_oauth_app",
                 new_callable=AsyncMock,
                 return_value={"app_id": 9999, "token": "putwatch_app_token"},
-            ), patch(
+            ) as mock_ensure_oauth, patch(
                 "app.monitor.PutioClient.cancel_and_remove_transfer",
                 new_callable=AsyncMock,
             ) as mock_cancel:
@@ -445,6 +445,8 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
                     {"tracker.alpha.org", "tracker.beta.org"},
                 )
                 mock_cancel.assert_not_called()
+                # Verify that polling transfers does NOT invoke ensure_putwatch_oauth_app
+                mock_ensure_oauth.assert_not_called()
 
                 # Now user enables a rule for tracker.alpha.org: cancel after 60 mins OR ratio 1.5
                 alpha_rule = store.get().trackers["tracker.alpha.org"]

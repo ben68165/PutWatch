@@ -593,16 +593,6 @@ class TransferMonitorService:
                     }
 
                 client = PutioClient(token=cfg.putio_token)
-
-                if not cfg.putio_app_id:
-                    app_reg = await client.ensure_putwatch_oauth_app()
-                    if app_reg and app_reg.get("app_id"):
-                        cfg.putio_app_id = int(app_reg["app_id"])
-                        if app_reg.get("token"):
-                            cfg.putio_token = str(app_reg["token"])
-                            client = PutioClient(token=cfg.putio_token)
-                        cfg = self.store.save(cfg)
-
                 raw_transfers = await client.list_transfers()
 
                 if self.account_info is None:

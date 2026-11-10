@@ -342,6 +342,15 @@ class PutioClient:
                 "token": str(app_token) if app_token else None,
                 "app": details.get("app", target_app),
             }
+        except PutioApiError as exc:
+            if exc.status_code == 401 or exc.error_type == "invalid_scope":
+                logger.debug(
+                    "Put.io token lacks oauth_apps management scope (%s). Skipping auto-registration.",
+                    exc,
+                )
+            else:
+                logger.warning("Could not auto-register PutWatch OAuth app: %s", exc)
+            return None
         except Exception as exc:
             logger.warning("Could not auto-register PutWatch OAuth app: %s", exc)
             return None

@@ -45,7 +45,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=PUTWATCH_APP_NAME,
-    version="1.0.1",
+    version="1.0.2",
     description=PUTWATCH_APP_DESCRIPTION,
     lifespan=lifespan,
 )

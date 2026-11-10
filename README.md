@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ben68165/PutWatch/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/Release-v1.0.1-amber.svg?style=flat-square" alt="Version 1.0.1" /></a>
+  <a href="https://github.com/ben68165/PutWatch/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/Release-v1.0.2-amber.svg?style=flat-square" alt="Version 1.0.2" /></a>
   <a href="https://hub.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-0db7ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker Ready" /></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-10b981.svg?style=flat-square" alt="License MIT" /></a>
