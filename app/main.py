@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
@@ -80,6 +80,16 @@ def _configured_timezone() -> str:
     return (os.environ.get("TZ") or "Europe/Berlin").strip()
 
 
+def _shell_version() -> int:
+    mtimes = []
+    for fname in ("index.html", "app.js", "sw.js"):
+        try:
+            mtimes.append(int((STATIC_DIR / fname).stat().st_mtime))
+        except OSError:
+            pass
+    return max(mtimes) if mtimes else 0
+
+
 @app.get("/", include_in_schema=False)
 async def serve_index() -> HTMLResponse:
     # Append the asset modification time as a cache-busting version so a new
@@ -91,6 +101,34 @@ async def serve_index() -> HTMLResponse:
         version = 0
     html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={version}"')
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def serve_service_worker() -> Response:
+    script = (STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+    script = script.replace("__PUTWATCH_SW_VERSION__", str(_shell_version()))
+    return Response(
+        content=script,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache",
+            "Service-Worker-Allowed": "/",
+        },
+    )
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def serve_manifest() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def serve_apple_touch_icon() -> FileResponse:
+    return FileResponse(STATIC_DIR / "apple-touch-icon.png", media_type="image/png")
 
 
 @app.get("/favicon.ico", include_in_schema=False)

@@ -16,6 +16,13 @@ let currentLogGrouping = 'none';
 let expandedLogGroups = new Set();
 let isTransfersHeaderCompact = false;
 let oobPollTimer = null;
+let statePollTimer = null;
+let isServiceUnreachable = false;
+let isReconnecting = false;
+let lastConnectedAt = null;
+
+const STATE_POLL_INTERVAL_MS = 10000;
+const SERVICE_FETCH_TIMEOUT_MS = 4500;
 
 function getStoredSort(key, defaultVal) {
   try {
@@ -277,14 +284,177 @@ function switchTab(tabName) {
   updateTransfersStickyHeaderState();
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = SERVICE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timerId);
+  }
+}
+
+function isConnectionError(err) {
+  if (!err) return false;
+  if (err.isConnectionFailure) return true;
+  if (err.name === 'AbortError' || err instanceof TypeError) return true;
+  const msg = String(err.message || '');
+  return /failed to fetch|networkerror|load failed|timed out|unreachable/i.test(msg);
+}
+
+function describeConnectionFailure(err) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return 'Device is offline';
+  }
+  if (err && err.name === 'AbortError') {
+    return 'Connection timed out';
+  }
+  if (err && err.httpStatus) {
+    return `Service unavailable (HTTP ${err.httpStatus})`;
+  }
+  return 'Local server or network unreachable';
+}
+
+function formatClockTime(dateObj) {
+  if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return '';
+  return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function stopStatePolling() {
+  if (statePollTimer !== null) {
+    clearInterval(statePollTimer);
+    statePollTimer = null;
+  }
+}
+
+function startStatePolling() {
+  stopStatePolling();
+  if (!isServiceUnreachable) {
+    statePollTimer = setInterval(fetchState, STATE_POLL_INTERVAL_MS);
+  }
+}
+
+function showServiceUnreachableModal(reasonText) {
+  isServiceUnreachable = true;
+  // Never run a background retry timer while the service is unreachable.
+  stopStatePolling();
+  if (oobPollTimer) {
+    clearInterval(oobPollTimer);
+    oobPollTimer = null;
+  }
+
+  const modal = document.getElementById('service-unreachable-modal');
+  const hostEl = document.getElementById('unreachable-host-label');
+  const offlineAlert = document.getElementById('unreachable-device-offline-note');
+  const detailEl = document.getElementById('unreachable-status-detail');
+
+  if (hostEl) {
+    hostEl.textContent = window.location.host || window.location.origin || 'local server';
+  }
+  if (offlineAlert) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      offlineAlert.classList.remove('hidden');
+    } else {
+      offlineAlert.classList.add('hidden');
+    }
+  }
+  if (detailEl) {
+    const checkedAt = formatClockTime(new Date());
+    const parts = [reasonText || 'Connection failed', `Checked at ${checkedAt}`];
+    if (lastConnectedAt) {
+      parts.push(`Last connected at ${formatClockTime(lastConnectedAt)}`);
+    }
+    detailEl.textContent = parts.join(' • ');
+  }
+
+  if (modal) {
+    modal.classList.remove('hidden');
+  }
+}
+
+function hideServiceUnreachableModal() {
+  isServiceUnreachable = false;
+  const modal = document.getElementById('service-unreachable-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+async function fetchValidState() {
+  const resp = await fetchWithTimeout(
+    '/api/state',
+    { cache: 'no-store' },
+    SERVICE_FETCH_TIMEOUT_MS
+  );
+  if (!resp.ok) {
+    const err = new Error(`HTTP ${resp.status}`);
+    err.httpStatus = resp.status;
+    if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+      err.isConnectionFailure = true;
+    }
+    throw err;
+  }
+  const contentType = String(resp.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) {
+    const err = new Error('Unexpected non-JSON response from host');
+    err.isConnectionFailure = true;
+    throw err;
+  }
+  const data = await resp.json();
+  if (!data || typeof data !== 'object' || !('settings' in data) || !('monitor' in data)) {
+    const err = new Error('Invalid state payload from host');
+    err.isConnectionFailure = true;
+    throw err;
+  }
+  return data;
+}
+
 async function fetchState() {
   try {
-    const resp = await fetch('/api/state');
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
+    const data = await fetchValidState();
+    lastConnectedAt = new Date();
+    if (isServiceUnreachable) {
+      hideServiceUnreachableModal();
+      startStatePolling();
+    }
     updateUI(data);
+    return true;
   } catch (err) {
     console.error('Failed to fetch state:', err);
+    if (isConnectionError(err)) {
+      showServiceUnreachableModal(describeConnectionFailure(err));
+    }
+    return false;
+  }
+}
+
+async function reconnectService() {
+  if (isReconnecting) return;
+  isReconnecting = true;
+
+  const btn = document.getElementById('btn-reconnect-service');
+  const spinner = document.getElementById('reconnect-spinner');
+  const label = document.getElementById('btn-reconnect-label');
+
+  if (btn) btn.disabled = true;
+  if (spinner) spinner.classList.add('pw-spin');
+  if (label) label.textContent = 'Checking Connection...';
+
+  try {
+    const data = await fetchValidState();
+    lastConnectedAt = new Date();
+    hideServiceUnreachableModal();
+    updateUI(data);
+    startStatePolling();
+    showToast('Connected to PutWatch service.', 'success');
+  } catch (err) {
+    console.error('Reconnect attempt failed:', err);
+    showServiceUnreachableModal(describeConnectionFailure(err));
+  } finally {
+    isReconnecting = false;
+    if (btn) btn.disabled = false;
+    if (spinner) spinner.classList.remove('pw-spin');
+    if (label) label.textContent = 'Try to Reconnect';
   }
 }
 
@@ -294,11 +464,18 @@ async function scanNow() {
   btn.disabled = true;
   spinner.classList.add('animate-spin');
   try {
-    const resp = await fetch('/api/poll?execute_rules=true', { method: 'POST' });
+    const resp = await fetchWithTimeout('/api/poll?execute_rules=true', { method: 'POST' }, 30000);
+    if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+      const gwErr = new Error(`HTTP ${resp.status}`);
+      gwErr.httpStatus = resp.status;
+      gwErr.isConnectionFailure = true;
+      throw gwErr;
+    }
     const data = await resp.json();
     if (!resp.ok) {
       throw new Error(data.detail || 'Poll failed');
     }
+    lastConnectedAt = new Date();
     if (data.state) {
       updateUI(data.state);
     }
@@ -314,7 +491,11 @@ async function scanNow() {
       showToast(msg, 'success');
     }
   } catch (err) {
-    showToast(`Scan error: ${err.message}`, 'error');
+    if (isConnectionError(err)) {
+      showServiceUnreachableModal(describeConnectionFailure(err));
+    } else {
+      showToast(`Scan error: ${err.message}`, 'error');
+    }
   } finally {
     btn.disabled = false;
     spinner.classList.remove('animate-spin');
@@ -2731,6 +2912,9 @@ async function clearLogs() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (isServiceUnreachable) {
+      return;
+    }
     const confirmModal = document.getElementById('confirm-modal');
     if (confirmModal && !confirmModal.classList.contains('hidden')) {
       resolveConfirmModal(false);
@@ -2759,9 +2943,26 @@ window.addEventListener(
   { passive: true }
 );
 
-// Initial load & auto-refresh UI state every 10 seconds
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !isServiceUnreachable) {
+    fetchState();
+  }
+});
+
+// Initial load, service worker registration for offline shell caching,
+// and live state polling while connected (stopped automatically when unreachable).
 document.addEventListener('DOMContentLoaded', () => {
   updateTransfersStickyHeaderState();
-  fetchState();
-  setInterval(fetchState, 10000);
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+      console.warn('Service worker registration failed:', err);
+    });
+  }
+
+  fetchState().then((ok) => {
+    if (ok) {
+      startStatePolling();
+    }
+  });
 });
