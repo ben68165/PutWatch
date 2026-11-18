@@ -19,6 +19,8 @@ from app.models import (
     PUTWATCH_REPO_URL,
     ActivityLogEntry,
     SettingsUpdateRequest,
+    SlotRetentionConfig,
+    SlotRetentionUpdateRequest,
     TrackerRule,
     TrackerRuleUpdateRequest,
 )
@@ -45,7 +47,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=PUTWATCH_APP_NAME,
-    version="1.0.2",
+    version="1.1.0",
     description=PUTWATCH_APP_DESCRIPTION,
     lifespan=lifespan,
 )
@@ -199,6 +201,8 @@ async def get_state() -> Dict[str, Any]:
             **cfg.default_rule.model_dump(mode="json"),
             "rule_summary": describe_rule(cfg.default_rule),
         },
+        "slot_retention": cfg.slot_retention.model_dump(mode="json"),
+        "slot_status": monitor_service.get_slot_status(cfg),
         "activity_log": [
             entry.model_dump(mode="json") for entry in cfg.activity_log[:500]
         ],
@@ -373,6 +377,20 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         normalized_id = norm[0] if norm else raw_id.lower()
         sample_url = norm[1] if norm and "://" in norm[1] else None
 
+    cfg = store.get()
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if normalized_id == "__default__":
+        existing = cfg.default_rule
+    else:
+        existing = cfg.trackers.get(normalized_id)
+
+    effective_slot_retention = (
+        req.slot_retention_enabled
+        if req.slot_retention_enabled is not None
+        else (existing.slot_retention_enabled if existing else False)
+    )
+
     if (
         req.enabled
         and not req.cancel_completed_on_first_scan
@@ -384,19 +402,12 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         and not req.notify_stalled_download_enabled
         and not req.cancel_stalled_download_enabled
         and not req.notify_long_queued_enabled
+        and not effective_slot_retention
     ):
         raise HTTPException(
             status_code=400,
             detail="An enabled rule must have at least one condition active.",
         )
-
-    cfg = store.get()
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    if normalized_id == "__default__":
-        existing = cfg.default_rule
-    else:
-        existing = cfg.trackers.get(normalized_id)
 
     rule = TrackerRule(
         tracker_id=normalized_id,
@@ -427,6 +438,7 @@ async def save_tracker_rule(req: TrackerRuleUpdateRequest) -> Dict[str, Any]:
         cancel_stalled_download_hours=req.cancel_stalled_download_hours,
         notify_long_queued_enabled=req.notify_long_queued_enabled,
         notify_long_queued_hours=req.notify_long_queued_hours,
+        slot_retention_enabled=effective_slot_retention,
         discovered_from_transfers=(
             existing.discovered_from_transfers if existing else False
         ),
@@ -458,6 +470,46 @@ async def delete_tracker_rule(tracker_id: str) -> Dict[str, Any]:
     deleted = store.delete_tracker(tracker_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Tracker '{tracker_id}' not found.")
+    return await get_state()
+
+
+@app.put("/api/slot-retention")
+async def update_slot_retention(req: SlotRetentionUpdateRequest) -> Dict[str, Any]:
+    cfg = store.get()
+    sr = cfg.slot_retention
+
+    if req.enabled is not None:
+        sr.enabled = req.enabled
+    if req.max_transfer_slots is not None:
+        sr.max_transfer_slots = max(1, min(1000, req.max_transfer_slots))
+    if req.slot_buffer is not None:
+        sr.slot_buffer = max(0, min(500, req.slot_buffer))
+    if req.popularity_metric is not None:
+        sr.popularity_metric = req.popularity_metric
+    if req.popularity_weight is not None:
+        sr.popularity_weight = max(0.0, min(100.0, req.popularity_weight))
+    if req.size_weight is not None:
+        sr.size_weight = max(0.0, min(100.0, req.size_weight))
+    if req.cancel_dead_or_completed is not None:
+        sr.cancel_dead_or_completed = req.cancel_dead_or_completed
+    if req.max_retention_enabled is not None:
+        sr.max_retention_enabled = req.max_retention_enabled
+    if req.max_retention_hours is not None:
+        sr.max_retention_hours = max(0.5, req.max_retention_hours)
+
+    if req.selected_tracker_ids is not None:
+        selected_set = {
+            tid.strip() for tid in req.selected_tracker_ids if tid and tid.strip()
+        }
+        for t_id, rule_obj in cfg.trackers.items():
+            rule_obj.slot_retention_enabled = t_id in selected_set
+        cfg.default_rule.slot_retention_enabled = "__default__" in selected_set
+
+    store.save(cfg)
+
+    if cfg.putio_token:
+        await monitor_service.poll_once(execute_cancellations=cfg.monitoring_enabled)
+
     return await get_state()
 
 

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.models import ActivityLogEntry, AppConfig, TrackerRule
+from app.models import ActivityLogEntry, AppConfig, SlotRetentionConfig, TrackerRule
 from app.putio_client import (
     PutioApiError,
     PutioClient,
@@ -15,6 +15,54 @@ from app.putio_client import (
 from app.storage import ConfigStore
 
 logger = logging.getLogger("putio_monitor.monitor")
+
+DEAD_TRACKER_PATTERNS: Tuple[str, ...] = (
+    "unregistered",
+    "torrent not found",
+    "not found",
+    "deleted",
+    "does not exist",
+    "not exist",
+    "not authorized",
+    "info_hash not found",
+    "info hash not found",
+    "banned",
+    "removed from tracker",
+    "trumped",
+)
+
+
+def detect_dead_or_finished_transfer(
+    transfer: Dict[str, Any],
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Detect whether a transfer is finished (COMPLETED / FINISHED / ERROR)
+    or no longer available/registered on the tracker.
+    Returns (is_dead_or_finished, kind, human_readable_reason).
+    """
+    for field_name in ("tracker_message", "error_message", "status_message"):
+        raw_msg = transfer.get(field_name)
+        if isinstance(raw_msg, str) and raw_msg.strip():
+            cleaned_msg = raw_msg.strip()
+            lowered = cleaned_msg.lower()
+            for pattern in DEAD_TRACKER_PATTERNS:
+                if pattern in lowered:
+                    snippet = cleaned_msg[:160]
+                    return (
+                        True,
+                        "dead_tracker",
+                        f"Tracker unavailable/removed ({snippet})",
+                    )
+
+    status = str(transfer.get("status") or "UNKNOWN").upper()
+    if status in ("COMPLETED", "FINISHED", "ERROR"):
+        return (
+            True,
+            "finished_status",
+            f"Transfer status is {status} (no longer seeding)",
+        )
+
+    return False, None, None
 
 
 def _utc_now_iso() -> str:
@@ -54,7 +102,7 @@ def format_duration(seconds: float) -> str:
 
 def describe_rule(rule: TrackerRule) -> str:
     if not rule.enabled:
-        return "Disabled"
+        return "Disabled [Slot Retention]" if rule.slot_retention_enabled else "Disabled"
     parts: List[str] = []
     if rule.cancel_on_completed:
         parts.append("Cancel on Download Complete")
@@ -85,6 +133,9 @@ def describe_rule(rule: TrackerRule) -> str:
     if keep_parts:
         keep_dur = format_duration(rule.keep_alive_hours * 3600)
         base_str += f" (Keep {' + '.join(keep_parts)} for {keep_dur})"
+
+    if rule.slot_retention_enabled:
+        base_str += " [Slot Retention]"
 
     return base_str
 
@@ -151,6 +202,8 @@ def compute_keep_alive_protections(
         # If cancel_completed_on_first_scan is active, every COMPLETED transfer (instantly completed or
         # switched to COMPLETED later) is canceled immediately, so it must never claim a keep-alive slot.
         if rule.cancel_completed_on_first_scan and st == "COMPLETED":
+            continue
+        if detect_dead_or_finished_transfer(t)[0]:
             continue
         seeding_pool.append(t)
 
@@ -248,6 +301,9 @@ def evaluate_transfer_against_rule(
             "reason": None,
             "protection_label": None,
             "protection_active": False,
+            "slot_retained": False,
+            "slot_rank": None,
+            "slot_score": None,
             "notification_active": False,
             "notification_type": None,
             "notification_label": None,
@@ -283,6 +339,9 @@ def evaluate_transfer_against_rule(
             "reason": completed_reason,
             "protection_label": None,
             "protection_active": False,
+            "slot_retained": False,
+            "slot_rank": None,
+            "slot_score": None,
             "notification_active": False,
             "notification_type": None,
             "notification_label": None,
@@ -484,6 +543,9 @@ def evaluate_transfer_against_rule(
         "reason": " | ".join(reasons) if reasons else None,
         "protection_label": protection_label,
         "protection_active": protection_active,
+        "slot_retained": False,
+        "slot_rank": None,
+        "slot_score": None,
         "notification_active": notification_active,
         "notification_type": notification_type,
         "notification_label": notification_label,
@@ -495,6 +557,317 @@ def evaluate_transfer_against_rule(
         "evaluated_seconds": evaluated_seconds,
         "target_seconds": int(target_seconds) if effective_use_time else None,
         "target_ratio": target_ratio if rule.use_ratio_rule else None,
+    }
+
+
+def _normalize_metric_scores(values_by_tid: Dict[int, float]) -> Dict[int, float]:
+    """
+    Normalize a non-negative metric into [0.0, 1.0] combining rank percentile and value ratio.
+    Zero or negative values receive 0.0; tied values receive identical scores.
+    """
+    n = len(values_by_tid)
+    if n == 0:
+        return {}
+    max_val = max(values_by_tid.values(), default=0.0)
+    if max_val <= 0.0:
+        return {tid: 0.0 for tid in values_by_tid}
+
+    sorted_vals = sorted(values_by_tid.values())
+    rank_by_val: Dict[float, int] = {}
+    for idx, val in enumerate(sorted_vals, start=1):
+        rank_by_val[val] = idx
+
+    normalized: Dict[int, float] = {}
+    for tid, val in values_by_tid.items():
+        if val <= 0.0:
+            normalized[tid] = 0.0
+        else:
+            rank_pct = rank_by_val[val] / float(n)
+            val_pct = val / max_val
+            normalized[tid] = 0.5 * rank_pct + 0.5 * val_pct
+    return normalized
+
+
+def compute_unified_retention_scores(
+    candidates: List[Dict[str, Any]],
+    slot_cfg: SlotRetentionConfig,
+) -> Dict[int, Dict[str, float]]:
+    """
+    Compute unified weighted score (0-100) combining popularity and file size
+    across all candidate transfers for global slot-based retention.
+    """
+    if not candidates:
+        return {}
+
+    size_vals: Dict[int, float] = {}
+    up_speed_vals: Dict[int, float] = {}
+    uploaded_vals: Dict[int, float] = {}
+    ratio_vals: Dict[int, float] = {}
+
+    for t in candidates:
+        tid = int(t.get("id") or 0)
+        size_vals[tid] = max(0.0, float(t.get("size") or 0.0))
+        up_speed_vals[tid] = max(0.0, float(t.get("up_speed") or 0.0))
+        uploaded_vals[tid] = max(0.0, float(t.get("uploaded") or 0.0))
+        ratio_vals[tid] = max(0.0, float(t.get("current_ratio") or 0.0))
+
+    size_norm = _normalize_metric_scores(size_vals)
+    up_speed_norm = _normalize_metric_scores(up_speed_vals)
+    uploaded_norm = _normalize_metric_scores(uploaded_vals)
+    ratio_norm = _normalize_metric_scores(ratio_vals)
+
+    metric = slot_cfg.popularity_metric or "combined"
+    w_pop = max(0.0, float(slot_cfg.popularity_weight))
+    w_size = max(0.0, float(slot_cfg.size_weight))
+    if w_pop + w_size <= 0.0:
+        w_pop = 50.0
+        w_size = 50.0
+    total_w = w_pop + w_size
+
+    scores: Dict[int, Dict[str, float]] = {}
+    for tid in size_vals:
+        if metric == "up_speed":
+            pop_val = 0.7 * up_speed_norm[tid] + 0.3 * uploaded_norm[tid]
+        elif metric == "uploaded":
+            pop_val = uploaded_norm[tid]
+        elif metric == "ratio":
+            pop_val = ratio_norm[tid]
+        else:
+            pop_val = (
+                0.4 * uploaded_norm[tid]
+                + 0.35 * up_speed_norm[tid]
+                + 0.25 * ratio_norm[tid]
+            )
+
+        size_val = size_norm[tid]
+        combined = ((w_pop * pop_val + w_size * size_val) / total_w) * 100.0
+        scores[tid] = {
+            "score": round(combined, 1),
+            "pop_score": round(pop_val * 100.0, 1),
+            "size_score": round(size_val * 100.0, 1),
+        }
+    return scores
+
+
+def _is_transfer_slot_retention_eligible(
+    matched_tracker_id: str,
+    matched_rule: Optional[TrackerRule],
+    extracted_trackers: List[Tuple[str, str]],
+    cfg: AppConfig,
+) -> bool:
+    """
+    Determine whether a transfer belongs to a tracker opted into global slot-based retention.
+    """
+    if matched_rule is not None and matched_rule.tracker_id != "__default__":
+        if matched_rule.slot_retention_enabled:
+            return True
+        exact = cfg.trackers.get(matched_tracker_id)
+        return bool(exact and exact.slot_retention_enabled)
+
+    if matched_rule is not None and matched_rule.slot_retention_enabled:
+        return True
+
+    exact = cfg.trackers.get(matched_tracker_id)
+    if exact and exact.slot_retention_enabled:
+        return True
+
+    for tr_id, _ in extracted_trackers:
+        tr_rule = cfg.trackers.get(tr_id)
+        if tr_rule and tr_rule.slot_retention_enabled:
+            return True
+
+    return False
+
+
+def apply_slot_retention(
+    raw_transfers: List[Dict[str, Any]],
+    evaluations_by_tid: Dict[int, Dict[str, Any]],
+    matched_for_transfer: Dict[int, Tuple[str, Optional[TrackerRule]]],
+    cfg: AppConfig,
+    transfer_tracker_map: Optional[Dict[int, List[Tuple[str, str]]]] = None,
+) -> Dict[str, Any]:
+    """
+    Evaluate global Put.io slot capacity across all transfers and retain top-scoring
+    overtime seeding transfers on selected trackers while respecting buffer and queued transfers.
+    Mutates evaluation dicts in `evaluations_by_tid` in place and returns a slot status summary.
+    """
+    slot_cfg = cfg.slot_retention
+    queued_statuses = ("IN_QUEUE", "WAITING", "QUEUED")
+    target_max_active = max(
+        0, int(slot_cfg.max_transfer_slots) - int(slot_cfg.slot_buffer)
+    )
+
+    participating_by_tid: Dict[int, bool] = {}
+    for t in raw_transfers:
+        tid = int(t.get("id") or 0)
+        matched_tracker_id, matched_rule = matched_for_transfer.get(
+            tid, ("untracked", None)
+        )
+        extracted = (transfer_tracker_map or {}).get(tid, [])
+        is_part = _is_transfer_slot_retention_eligible(
+            matched_tracker_id, matched_rule, extracted, cfg
+        )
+        participating_by_tid[tid] = is_part
+
+        # Step 1: Remove dead/completed/finished transfers on selected trackers
+        if slot_cfg.enabled and slot_cfg.cancel_dead_or_completed and is_part:
+            ev = evaluations_by_tid.get(tid)
+            if ev is not None:
+                is_dead, _kind, dead_reason = detect_dead_or_finished_transfer(t)
+                if is_dead:
+                    ev["should_cancel"] = True
+                    ev["protection_active"] = False
+                    ev["protection_label"] = None
+                    ev["slot_retained"] = False
+                    ev["reason"] = dead_reason
+                    if not ev.get("rule_enabled"):
+                        ev["rule_enabled"] = True
+                        ev["rule_summary"] = "Slot Retention (Dead/Completed Cleanup)"
+
+    queued_count = 0
+    base_active_count = 0
+    overtime_candidates: List[Dict[str, Any]] = []
+
+    for t in raw_transfers:
+        tid = int(t.get("id") or 0)
+        st = str(t.get("status") or "UNKNOWN").upper()
+        ev = evaluations_by_tid.get(tid, {})
+        should_cancel = bool(ev.get("should_cancel"))
+
+        if st in queued_statuses:
+            if not should_cancel:
+                queued_count += 1
+            continue
+
+        is_overtime_candidate = (
+            slot_cfg.enabled
+            and participating_by_tid.get(tid, False)
+            and st == "SEEDING"
+            and should_cancel
+            and not detect_dead_or_finished_transfer(t)[0]
+        )
+        if is_overtime_candidate:
+            overtime_candidates.append(t)
+        elif not should_cancel:
+            base_active_count += 1
+
+    available_overtime_slots = max(
+        0, target_max_active - base_active_count - queued_count
+    )
+
+    if not slot_cfg.enabled:
+        return {
+            "enabled": False,
+            "max_transfer_slots": int(slot_cfg.max_transfer_slots),
+            "slot_buffer": int(slot_cfg.slot_buffer),
+            "target_max_active": target_max_active,
+            "total_transfers": len(raw_transfers),
+            "base_active_count": base_active_count,
+            "queued_count": queued_count,
+            "available_overtime_slots": available_overtime_slots,
+            "retained_count": 0,
+            "evicted_count": 0,
+            "candidate_count": 0,
+        }
+
+    # Filter out candidates exceeding optional max retention cap
+    eligible_candidates: List[Dict[str, Any]] = []
+    max_ret_secs = (
+        max(0.0, float(slot_cfg.max_retention_hours) * 3600.0)
+        if slot_cfg.max_retention_enabled
+        else None
+    )
+    expired_count = 0
+
+    for t in overtime_candidates:
+        tid = int(t.get("id") or 0)
+        ev = evaluations_by_tid[tid]
+        seeding_seconds = int(t.get("seconds_seeding") or 0)
+        if max_ret_secs is not None and seeding_seconds >= max_ret_secs:
+            expired_count += 1
+            cap_msg = (
+                f"Slot retention max cap reached "
+                f"({format_duration(seeding_seconds)} >= {format_duration(max_ret_secs)})"
+            )
+            ev["reason"] = f"{ev['reason']} | {cap_msg}" if ev.get("reason") else cap_msg
+            ev["slot_retained"] = False
+            ev["protection_active"] = False
+            ev["protection_label"] = None
+            continue
+        eligible_candidates.append(t)
+
+    scores = compute_unified_retention_scores(eligible_candidates, slot_cfg)
+    ranked_candidates = sorted(
+        eligible_candidates,
+        key=lambda t: (
+            scores[int(t.get("id") or 0)]["score"],
+            float(t.get("up_speed") or 0.0),
+            float(t.get("uploaded") or 0.0),
+            float(t.get("size") or 0.0),
+            float(t.get("current_ratio") or 0.0),
+            -int(t.get("id") or 0),
+        ),
+        reverse=True,
+    )
+
+    retained_count = 0
+    evicted_count = expired_count
+
+    for rank, t in enumerate(ranked_candidates, start=1):
+        tid = int(t.get("id") or 0)
+        ev = evaluations_by_tid[tid]
+        score_info = scores[tid]
+        seeding_seconds = int(t.get("seconds_seeding") or 0)
+
+        ev["slot_rank"] = rank
+        ev["slot_score"] = score_info["score"]
+
+        if rank <= available_overtime_slots:
+            retained_count += 1
+            ev["should_cancel"] = False
+            ev["reason"] = None
+            ev["slot_retained"] = True
+            ev["protection_active"] = True
+            ev["protection_label"] = (
+                f"Slot Retained #{rank} (Score {score_info['score']:.0f})"
+            )
+            if max_ret_secs is not None:
+                ev["use_time_rule"] = True
+                ev["target_seconds"] = int(max_ret_secs)
+                ev["evaluated_seconds"] = seeding_seconds
+                ev["time_progress_pct"] = (
+                    min(100.0, round((seeding_seconds / max_ret_secs) * 100.0, 1))
+                    if max_ret_secs > 0
+                    else 100.0
+                )
+                ev["remaining_seconds"] = max(0, int(max_ret_secs - seeding_seconds))
+            else:
+                ev["use_time_rule"] = False
+                ev["target_seconds"] = None
+                ev["remaining_seconds"] = None
+        else:
+            evicted_count += 1
+            ev["slot_retained"] = False
+            ev["protection_active"] = False
+            ev["protection_label"] = None
+            evict_msg = (
+                f"Slot limit reached (Rank #{rank} > {available_overtime_slots} "
+                f"available overtime slots; {queued_count} queued)"
+            )
+            ev["reason"] = f"{ev['reason']} | {evict_msg}" if ev.get("reason") else evict_msg
+
+    return {
+        "enabled": True,
+        "max_transfer_slots": int(slot_cfg.max_transfer_slots),
+        "slot_buffer": int(slot_cfg.slot_buffer),
+        "target_max_active": target_max_active,
+        "total_transfers": len(raw_transfers),
+        "base_active_count": base_active_count,
+        "queued_count": queued_count,
+        "available_overtime_slots": available_overtime_slots,
+        "retained_count": retained_count,
+        "evicted_count": evicted_count,
+        "candidate_count": len(overtime_candidates),
     }
 
 
@@ -517,7 +890,36 @@ class TransferMonitorService:
         self.account_info: Optional[Dict[str, Any]] = None
         self.cached_transfers: List[Dict[str, Any]] = []
         self.first_seen_status: Dict[int, str] = {}
+        self.last_slot_status: Optional[Dict[str, Any]] = None
         self.is_polling: bool = False
+
+    def get_slot_status(self, cfg: AppConfig) -> Dict[str, Any]:
+        target_max = max(
+            0,
+            int(cfg.slot_retention.max_transfer_slots)
+            - int(cfg.slot_retention.slot_buffer),
+        )
+        if self.last_slot_status is not None:
+            return {
+                **self.last_slot_status,
+                "enabled": bool(cfg.slot_retention.enabled),
+                "max_transfer_slots": int(cfg.slot_retention.max_transfer_slots),
+                "slot_buffer": int(cfg.slot_retention.slot_buffer),
+                "target_max_active": target_max,
+            }
+        return {
+            "enabled": bool(cfg.slot_retention.enabled),
+            "max_transfer_slots": int(cfg.slot_retention.max_transfer_slots),
+            "slot_buffer": int(cfg.slot_retention.slot_buffer),
+            "target_max_active": target_max,
+            "total_transfers": 0,
+            "base_active_count": 0,
+            "queued_count": 0,
+            "available_overtime_slots": target_max,
+            "retained_count": 0,
+            "evicted_count": 0,
+            "candidate_count": 0,
+        }
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -702,10 +1104,20 @@ class TransferMonitorService:
                     )
                     protections_by_transfer_id.update(rule_protections)
 
-                # Second pass: evaluate rules and optionally cancel & remove matching transfers
-                enriched_transfers: List[Dict[str, Any]] = []
-                canceled_actions: List[ActivityLogEntry] = []
-                is_dry_run = cfg.dry_run if force_dry_run is None else force_dry_run
+                # Second pass: evaluate per-tracker rules across all transfers first
+                evaluated_items: List[
+                    Tuple[
+                        Dict[str, Any],
+                        int,
+                        str,
+                        str,
+                        List[Tuple[str, str]],
+                        str,
+                        Optional[TrackerRule],
+                        Dict[str, Any],
+                    ]
+                ] = []
+                evaluations_by_tid: Dict[int, Dict[str, Any]] = {}
 
                 for t in raw_transfers:
                     tid = int(t.get("id") or 0)
@@ -728,7 +1140,45 @@ class TransferMonitorService:
                         protection_label=protection_label,
                         was_completed_on_first_scan=was_completed_first,
                     )
+                    evaluations_by_tid[tid] = evaluation
+                    evaluated_items.append(
+                        (
+                            t,
+                            tid,
+                            t_name,
+                            t_status,
+                            extracted,
+                            matched_tracker_id,
+                            matched_rule,
+                            evaluation,
+                        )
+                    )
 
+                # Apply global slot-based retention across all transfers
+                slot_status = apply_slot_retention(
+                    raw_transfers,
+                    evaluations_by_tid,
+                    matched_for_transfer,
+                    cfg,
+                    transfer_tracker_map=transfer_tracker_map,
+                )
+                self.last_slot_status = slot_status
+
+                # Third pass: execute cancellations and build enriched transfer payload
+                enriched_transfers: List[Dict[str, Any]] = []
+                canceled_actions: List[ActivityLogEntry] = []
+                is_dry_run = cfg.dry_run if force_dry_run is None else force_dry_run
+
+                for (
+                    t,
+                    tid,
+                    t_name,
+                    t_status,
+                    extracted,
+                    matched_tracker_id,
+                    matched_rule,
+                    evaluation,
+                ) in evaluated_items:
                     enriched = {
                         **t,
                         "primary_tracker": matched_tracker_id,
@@ -813,6 +1263,7 @@ class TransferMonitorService:
                     "transfers": enriched_transfers,
                     "newly_discovered_trackers": newly_discovered,
                     "canceled": [a.model_dump(mode="json") for a in canceled_actions],
+                    "slot_status": slot_status,
                 }
             except PutioApiError as exc:
                 self.last_error = f"Put.io API Error: {exc}"

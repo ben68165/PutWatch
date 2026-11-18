@@ -5,6 +5,8 @@ let appState = {
   transfers: [],
   trackers: [],
   default_rule: null,
+  slot_retention: null,
+  slot_status: null,
   activity_log: [],
 };
 
@@ -1028,9 +1030,13 @@ function renderSingleTransferCardHtml(t, hideNames) {
   }
 
   const protectionBadge = ev.protection_active && ev.protection_label
-    ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
-         ★ Protected: ${escapeHtml(ev.protection_label)}
-       </span>`
+    ? ev.slot_retained
+      ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/40">
+           &#9889; ${escapeHtml(ev.protection_label)}
+         </span>`
+      : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">
+           ★ Protected: ${escapeHtml(ev.protection_label)}
+         </span>`
     : '';
 
   const notificationBadge = isNotified
@@ -1054,12 +1060,16 @@ function renderSingleTransferCardHtml(t, hideNames) {
 
   if (ev.rule_enabled) {
     const isStalledDownloadEval = statusUpper === 'DOWNLOADING' && Boolean(ev.cancel_stalled_download_enabled);
-    const barColor = ev.protection_active
+    const barColor = ev.slot_retained
+      ? 'bg-teal-400'
+      : ev.protection_active
       ? 'bg-sky-400'
       : isStalledDownloadEval
       ? 'bg-orange-500'
       : 'bg-amber-500';
-    const timeLabel = ev.protection_active
+    const timeLabel = ev.slot_retained
+      ? `Slot Retention Cap (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
+      : ev.protection_active
       ? `Keep-Alive (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
       : isStalledDownloadEval
       ? `Stalled Download Cancel (${formatDuration(ev.evaluated_seconds)} / ${formatDuration(ev.target_seconds)})`
@@ -1124,6 +1134,12 @@ function renderSingleTransferCardHtml(t, hideNames) {
         <div class="pt-1.5 border-t border-slate-800/40 grid grid-cols-1 ${ev.use_time_rule && ev.use_ratio_rule ? 'sm:grid-cols-2' : ''} gap-2">
           ${timeBar}
           ${ratioBar}
+        </div>`;
+    } else if (ev.slot_retained) {
+      ruleProgressBarsHtml = `
+        <div class="pt-1.5 border-t border-slate-800/40 flex flex-wrap items-center justify-between gap-2 text-[10px] text-teal-300/90">
+          <span>&#9889; Retained in Free Slot (Rank #${Number(ev.slot_rank || 1)} &bull; Weighted Score ${Number(ev.slot_score || 0).toFixed(1)})</span>
+          <span class="font-mono text-slate-400">Unlimited while slots free</span>
         </div>`;
     }
   } else {
@@ -1407,7 +1423,7 @@ function renderTransfers() {
         titleHtml: `
           <span class="inline-flex items-center gap-2">
             <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40">★ Protected</span>
-            <span class="font-bold text-sm text-white">Keep-Alive Protected Transfers (Top Seeded / Largest)</span>
+            <span class="font-bold text-sm text-white">Keep-Alive Protected Transfers (Top Seeded / Largest / Slot-Retained)</span>
           </span>`,
         actionHtml: '',
         items: protectedItems,
@@ -1555,6 +1571,9 @@ function renderTrackerCardHtml(r, isDefault = false) {
   if (keepParts.length > 0) {
     chips.push(`<span class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[10px] font-medium">★ Keep ${escapeHtml(keepParts.join('+'))} (${escapeHtml(keepDurationText)})</span>`);
   }
+  if (r.slot_retention_enabled) {
+    chips.push(`<span class="px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 text-[10px] font-medium">&#9889; Slot Retain</span>`);
+  }
 
   if (chips.length === 0) {
     chips.push(`<span class="text-[11px] text-slate-500 italic">No conditions active</span>`);
@@ -1578,7 +1597,18 @@ function renderTrackerCardHtml(r, isDefault = false) {
             ${chips.join('')}
           </div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex items-center gap-2 shrink-0 flex-wrap">
+          <button
+            onclick="quickToggleTrackerSlotRetention('__default__')"
+            title="Toggle Default Fallback participation in Global Slot-Based Retention"
+            class="px-2.5 py-1 rounded-full text-xs font-semibold border transition cursor-pointer shrink-0 ${
+              r.slot_retention_enabled
+                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40 hover:bg-teal-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-teal-300 hover:border-teal-500/40'
+            }"
+          >
+            &#9889; ${r.slot_retention_enabled ? 'Slot Retain ON' : 'Slot Retain'}
+          </button>
           <button
             onclick="quickToggleRule('__default__')"
             class="px-3 py-1 rounded-full text-xs font-bold border transition cursor-pointer shrink-0 ${
@@ -1647,6 +1677,17 @@ function renderTrackerCardHtml(r, isDefault = false) {
         </div>
         <div class="flex items-center gap-1.5">
           <button
+            onclick="quickToggleTrackerSlotRetention(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+              r.slot_retention_enabled
+                ? 'bg-teal-500/20 border-teal-500/40 text-teal-300 hover:bg-teal-500/30'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-teal-300 hover:border-teal-500/40'
+            }"
+            title="Toggle Global Slot Retention for this tracker"
+          >
+            &#9889;
+          </button>
+          <button
             onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
             class="px-2 py-1 rounded-md bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 text-[11px] transition cursor-pointer"
             title="Remove tracker from list"
@@ -1694,8 +1735,13 @@ function renderDiscoveredDisabledTrackerCardHtml(r) {
             ○ Disabled
           </button>
         </div>
-        <div class="text-[11px] text-slate-400 flex items-center gap-1.5">
+        <div class="text-[11px] text-slate-400 flex items-center gap-1.5 flex-wrap">
           <span class="text-purple-300/85 font-medium">Global Fallback Rule applies</span>
+          ${
+            r.slot_retention_enabled
+              ? '<span class="px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 text-[10px] font-medium">&#9889; Slot Retain</span>'
+              : ''
+          }
         </div>
       </div>
 
@@ -1705,6 +1751,17 @@ function renderDiscoveredDisabledTrackerCardHtml(r) {
           <span>Canceled: <strong class="text-amber-400/80">${r.canceled_transfers_count || 0}</strong></span>
         </div>
         <div class="flex items-center gap-1.5">
+          <button
+            onclick="quickToggleTrackerSlotRetention(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
+            class="px-2 py-1 rounded-md text-[11px] font-semibold border transition cursor-pointer ${
+              r.slot_retention_enabled
+                ? 'bg-teal-500/20 border-teal-500/40 text-teal-300 hover:bg-teal-500/30'
+                : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-teal-300 hover:border-teal-500/40'
+            }"
+            title="Toggle Global Slot Retention for this tracker"
+          >
+            &#9889;
+          </button>
           <button
             onclick="deleteTrackerRule(${JSON.stringify(r.tracker_id).replace(/"/g, '&quot;')})"
             class="px-2 py-1 rounded-md bg-slate-800 hover:bg-red-950/70 text-slate-400 hover:text-red-300 text-[11px] transition cursor-pointer"
@@ -1723,7 +1780,137 @@ function renderDiscoveredDisabledTrackerCardHtml(r) {
     </div>`;
 }
 
+function renderSlotRetentionCardHtml() {
+  const sr = appState.slot_retention || {
+    enabled: false,
+    max_transfer_slots: 50,
+    slot_buffer: 2,
+    popularity_metric: 'combined',
+    popularity_weight: 50,
+    size_weight: 50,
+    cancel_dead_or_completed: true,
+    max_retention_enabled: true,
+    max_retention_hours: 336,
+  };
+  const status = appState.slot_status || {};
+  const maxSlots = Math.max(1, Number(status.max_transfer_slots ?? sr.max_transfer_slots ?? 50));
+  const buffer = Math.max(0, Number(status.slot_buffer ?? sr.slot_buffer ?? 2));
+  const targetMax = Math.max(0, maxSlots - buffer);
+  const baseActive = Math.max(0, Number(status.base_active_count || 0));
+  const retained = sr.enabled ? Math.max(0, Number(status.retained_count || 0)) : 0;
+  const queued = Math.max(0, Number(status.queued_count || 0));
+  const usedTotal = baseActive + retained + queued;
+  const freeOvertime = Math.max(0, targetMax - usedTotal);
+
+  const pct = (val) => Math.min(100, Math.max(0, (val / maxSlots) * 100)).toFixed(2);
+
+  const trackers = appState.trackers || [];
+  const selectedCount =
+    trackers.filter((t) => Boolean(t.slot_retention_enabled)).length +
+    (appState.default_rule && appState.default_rule.slot_retention_enabled ? 1 : 0);
+
+  const wPop = Number(sr.popularity_weight ?? 50);
+  const wSize = Number(sr.size_weight ?? 50);
+  const wTotal = wPop + wSize > 0 ? wPop + wSize : 100;
+  const popPct = Math.round((wPop / wTotal) * 100);
+  const sizePct = 100 - popPct;
+
+  const metricLabels = {
+    combined: 'Combined',
+    up_speed: 'Speed',
+    uploaded: 'Uploaded',
+    ratio: 'Ratio',
+  };
+  const metricLabel = metricLabels[sr.popularity_metric] || 'Combined';
+  const maxCapText = sr.max_retention_enabled
+    ? formatDuration(Number(sr.max_retention_hours || 336) * 3600)
+    : 'Unlimited';
+
+  const borderClass = sr.enabled
+    ? 'border-teal-500/40 shadow-sm shadow-teal-500/5'
+    : 'border-slate-800';
+
+  return `
+    <div class="bg-slate-900 border ${borderClass} rounded-xl p-4 space-y-3.5">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="space-y-1 min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="w-2 h-2 rounded-full ${sr.enabled ? 'bg-teal-400 animate-pulse' : 'bg-slate-500'} shrink-0"></span>
+            <span class="font-bold text-sm sm:text-base text-white truncate">&#9889; Global Slot-Based Retention</span>
+            <span class="px-2 py-0.5 text-[10px] rounded-full bg-teal-500/15 text-teal-300 border border-teal-500/30">Capacity Keep-Alive</span>
+          </div>
+          <p class="text-xs text-slate-400">
+            Retains seeding transfers on selected trackers past normal limits while Put.io slots are unused, ranking globally by Popularity &amp; Size and freeing space when new transfers queue.
+          </p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button
+            onclick="quickToggleSlotRetention()"
+            class="px-3 py-1 rounded-full text-xs font-bold border transition cursor-pointer shrink-0 ${
+              sr.enabled
+                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40 hover:bg-teal-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+            }"
+          >
+            ${sr.enabled ? '● Enabled' : '○ Disabled'}
+          </button>
+          <button
+            onclick="openSlotRetentionModal()"
+            class="px-3.5 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 border border-teal-500/40 text-teal-300 font-semibold text-xs transition cursor-pointer"
+          >
+            Configure Slots
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Slot Capacity Meter -->
+      <div class="p-3 rounded-lg bg-slate-950/80 border border-slate-800/80 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <span class="font-semibold text-slate-300">
+            Live Put.io Slot Usage:
+            <span class="font-mono text-white">${usedTotal} / ${maxSlots}</span>
+            <span class="text-slate-500">(Target Cap: ${targetMax})</span>
+          </span>
+          <span class="font-mono text-teal-300">
+            Free Overtime Capacity: ${freeOvertime} slot${freeOvertime === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div class="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
+          <div class="h-full bg-sky-500 transition-all" style="width: ${pct(baseActive)}%" title="Base Active: ${baseActive}"></div>
+          <div class="h-full bg-teal-400 transition-all" style="width: ${pct(retained)}%" title="Slot-Retained: ${retained}"></div>
+          <div class="h-full bg-amber-400 transition-all" style="width: ${pct(queued)}%" title="Queued: ${queued}"></div>
+          <div class="h-full bg-slate-800/60 transition-all" style="width: ${pct(freeOvertime)}%" title="Unused Capacity: ${freeOvertime}"></div>
+          <div class="h-full bg-slate-700/70 transition-all" style="width: ${pct(buffer)}%" title="Reserved Buffer: ${buffer}"></div>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-500"></span>Base Active: <strong class="text-slate-200 font-mono">${baseActive}</strong></span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-teal-400"></span>Slot-Retained: <strong class="text-teal-300 font-mono">${retained}</strong></span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span>Queued: <strong class="text-amber-300 font-mono">${queued}</strong></span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-slate-600"></span>Reserved Buffer: <strong class="text-slate-300 font-mono">${buffer}</strong></span>
+        </div>
+      </div>
+
+      <!-- Summary Chips -->
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300 text-[10px] font-medium">📊 Cap ${targetMax}/${maxSlots} (${buffer} buffer)</span>
+        <span class="px-2 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 text-[10px] font-medium">⚖ ${popPct}% Pop (${escapeHtml(metricLabel)}) / ${sizePct}% Size</span>
+        <span class="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[10px] font-medium">⏱ Max Cap: ${escapeHtml(maxCapText)}</span>
+        ${
+          sr.cancel_dead_or_completed
+            ? '<span class="px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10px] font-medium">🧹 Dead / Completed Auto-Remove</span>'
+            : ''
+        }
+        <span class="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium">✓ ${selectedCount} Selected Tracker${selectedCount === 1 ? '' : 's'}</span>
+      </div>
+    </div>`;
+}
+
 function renderTrackers() {
+  const slotContainer = document.getElementById('slot-retention-container');
+  if (slotContainer) {
+    slotContainer.innerHTML = renderSlotRetentionCardHtml();
+  }
+
   const defaultContainer = document.getElementById('default-rule-container');
   if (appState.default_rule) {
     defaultContainer.innerHTML = renderTrackerCardHtml(appState.default_rule, true);
@@ -2195,6 +2382,7 @@ function trackerHasSpecificSettings(t) {
   if (t.cancel_completed_on_first_scan || t.cancel_on_completed) return true;
   if (t.notify_stalled_download_enabled || t.cancel_stalled_download_enabled || t.notify_long_queued_enabled) return true;
   if (t.use_ratio_rule || t.keep_top_seeded_enabled || t.keep_largest_enabled) return true;
+  if (t.slot_retention_enabled) return true;
   if (t.max_time_minutes && t.max_time_minutes !== 120) return true;
   return false;
 }
@@ -2229,6 +2417,7 @@ function applyRuleSettingsToModal(rule) {
   const keepLargestCountInput = document.getElementById('modal-keep-largest-count');
   const keepAliveDaysInput = document.getElementById('modal-keep-alive-days');
   const keepAliveHoursInput = document.getElementById('modal-keep-alive-hours');
+  const slotRetentionChk = document.getElementById('modal-slot-retention-enabled');
 
   enabledChk.checked = Boolean(rule.enabled);
   cancelCompletedFirstScanChk.checked = Boolean(rule.cancel_completed_on_first_scan);
@@ -2268,6 +2457,9 @@ function applyRuleSettingsToModal(rule) {
   const totalKeepHours = Number(rule.keep_alive_hours ?? 72);
   keepAliveDaysInput.value = Math.floor(totalKeepHours / 24);
   keepAliveHoursInput.value = Math.round(totalKeepHours % 24);
+  if (slotRetentionChk) {
+    slotRetentionChk.checked = Boolean(rule.slot_retention_enabled);
+  }
 
   const opRadios = document.getElementsByName('modal-operator');
   opRadios.forEach((r) => {
@@ -2329,6 +2521,7 @@ function openRuleModal(trackerId) {
       keep_largest_enabled: false,
       keep_largest_count: 3,
       keep_alive_hours: 72,
+      slot_retention_enabled: false,
     });
   }
 
@@ -2454,6 +2647,7 @@ async function applyAndSaveCopiedRuleSettings() {
         keep_largest_enabled: false,
         keep_largest_count: 3,
         keep_alive_hours: 72,
+        slot_retention_enabled: false,
       });
 
       if (!trackerId) {
@@ -2517,6 +2711,9 @@ async function saveModalRule(customToastMsg = null) {
   const useRatio = document.getElementById('modal-use-ratio').checked;
   const keepTopSeeded = document.getElementById('modal-keep-top-seeded').checked;
   const keepLargest = document.getElementById('modal-keep-largest').checked;
+  const slotRetentionEnabled = Boolean(
+    document.getElementById('modal-slot-retention-enabled')?.checked
+  );
 
   if (
     enabled &&
@@ -2528,7 +2725,8 @@ async function saveModalRule(customToastMsg = null) {
     !useTime &&
     !useRatio &&
     !keepTopSeeded &&
-    !keepLargest
+    !keepLargest &&
+    !slotRetentionEnabled
   ) {
     showToast('Please enable at least one rule condition or detection option.', 'error');
     return;
@@ -2597,6 +2795,7 @@ async function saveModalRule(customToastMsg = null) {
     keep_largest_count: Math.max(1, Number(document.getElementById('modal-keep-largest-count').value) || 3),
     keep_alive_hours: keepAliveHours,
     include_downloading: false,
+    slot_retention_enabled: slotRetentionEnabled,
   };
 
   try {
@@ -2620,18 +2819,17 @@ async function saveModalRule(customToastMsg = null) {
   }
 }
 
-async function quickToggleRule(trackerId) {
-  let existing =
-    trackerId === '__default__'
-      ? appState.default_rule
-      : (appState.trackers || []).find((t) => t.tracker_id === trackerId);
-  if (!existing) return;
+function buildTrackerPayloadFromExisting(existing, overrides = {}) {
+  const nextEnabled = overrides.enabled !== undefined ? Boolean(overrides.enabled) : Boolean(existing.enabled);
+  const nextSlotRet =
+    overrides.slot_retention_enabled !== undefined
+      ? Boolean(overrides.slot_retention_enabled)
+      : Boolean(existing.slot_retention_enabled);
 
-  const newEnabled = !existing.enabled;
-  const payload = {
+  return {
     tracker_id: existing.tracker_id,
     display_name: existing.display_name,
-    enabled: newEnabled,
+    enabled: nextEnabled,
     cancel_completed_on_first_scan: Boolean(existing.cancel_completed_on_first_scan),
     cancel_on_completed: Boolean(existing.cancel_on_completed),
     notify_stalled_download_enabled: Boolean(existing.notify_stalled_download_enabled),
@@ -2648,7 +2846,8 @@ async function quickToggleRule(trackerId) {
         !existing.notify_stalled_download_enabled &&
         !existing.cancel_stalled_download_enabled &&
         !existing.notify_long_queued_enabled &&
-        newEnabled),
+        !nextSlotRet &&
+        nextEnabled),
     max_time_minutes: existing.max_time_minutes,
     time_metric: existing.time_metric || 'seeding_time',
     use_ratio_rule: existing.use_ratio_rule,
@@ -2661,7 +2860,19 @@ async function quickToggleRule(trackerId) {
     keep_largest_count: existing.keep_largest_count || 3,
     keep_alive_hours: existing.keep_alive_hours || 72.0,
     include_downloading: Boolean(existing.include_downloading),
+    slot_retention_enabled: nextSlotRet,
   };
+}
+
+async function quickToggleRule(trackerId) {
+  let existing =
+    trackerId === '__default__'
+      ? appState.default_rule
+      : (appState.trackers || []).find((t) => t.tracker_id === trackerId);
+  if (!existing) return;
+
+  const newEnabled = !existing.enabled;
+  const payload = buildTrackerPayloadFromExisting(existing, { enabled: newEnabled });
 
   try {
     const resp = await fetch('/api/trackers', {
@@ -2673,6 +2884,250 @@ async function quickToggleRule(trackerId) {
     if (!resp.ok) throw new Error(data.detail || 'Failed to toggle rule');
     updateUI(data);
     showToast(`${getTrackerDisplayName(existing.tracker_id)}: Rule ${newEnabled ? 'enabled' : 'disabled'}`, 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function quickToggleTrackerSlotRetention(trackerId) {
+  const existing =
+    trackerId === '__default__'
+      ? appState.default_rule
+      : (appState.trackers || []).find((t) => t.tracker_id === trackerId);
+  if (!existing) return;
+
+  const nextSlotRet = !Boolean(existing.slot_retention_enabled);
+  const payload = buildTrackerPayloadFromExisting(existing, {
+    slot_retention_enabled: nextSlotRet,
+  });
+
+  try {
+    const resp = await fetch('/api/trackers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to toggle slot retention');
+    updateUI(data);
+    showToast(
+      `${getTrackerDisplayName(existing.tracker_id)}: Slot Retention ${nextSlotRet ? 'enabled' : 'disabled'}`,
+      'info'
+    );
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function quickToggleSlotRetention() {
+  const currentEnabled = Boolean(appState.slot_retention && appState.slot_retention.enabled);
+  const nextEnabled = !currentEnabled;
+  try {
+    const resp = await fetch('/api/slot-retention', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: nextEnabled }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to toggle slot retention');
+    updateUI(data);
+    showToast(`Global Slot-Based Retention ${nextEnabled ? 'enabled' : 'disabled'}`, 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function updateSlotRetentionModalUI() {
+  const maxSlots = Math.max(1, Number(document.getElementById('slot-modal-max-slots')?.value) || 50);
+  const buffer = Math.max(0, Number(document.getElementById('slot-modal-buffer')?.value) || 0);
+  const targetMax = Math.max(0, maxSlots - buffer);
+
+  const effEl = document.getElementById('slot-modal-effective-preview');
+  if (effEl) {
+    effEl.textContent = `Target Max: ${targetMax} / ${maxSlots}`;
+  }
+
+  const popW = Math.max(0, Number(document.getElementById('slot-modal-pop-weight')?.value ?? 50));
+  const sizeW = Math.max(0, Number(document.getElementById('slot-modal-size-weight')?.value ?? 50));
+  const sumW = popW + sizeW > 0 ? popW + sizeW : 100;
+  const popPct = Math.round((popW / sumW) * 100);
+  const sizePct = 100 - popPct;
+  const wEl = document.getElementById('slot-modal-weight-preview');
+  if (wEl) {
+    wEl.textContent = `${popPct}% Popularity / ${sizePct}% Size`;
+  }
+
+  const maxCapEnabled = Boolean(document.getElementById('slot-modal-max-retention-enabled')?.checked);
+  const maxCapFields = document.getElementById('slot-modal-max-cap-fields');
+  if (maxCapFields) {
+    maxCapFields.style.opacity = maxCapEnabled ? '1' : '0.4';
+  }
+}
+
+function selectAllSlotRetentionTrackers(checked) {
+  document.querySelectorAll('.slot-tracker-checkbox').forEach((chk) => {
+    chk.checked = Boolean(checked);
+  });
+}
+
+function openSlotRetentionModal() {
+  const modal = document.getElementById('slot-retention-modal');
+  if (!modal) return;
+  const sr = appState.slot_retention || {
+    enabled: false,
+    max_transfer_slots: 50,
+    slot_buffer: 2,
+    popularity_metric: 'combined',
+    popularity_weight: 50,
+    size_weight: 50,
+    cancel_dead_or_completed: true,
+    max_retention_enabled: true,
+    max_retention_hours: 336,
+  };
+
+  document.getElementById('slot-modal-enabled').checked = Boolean(sr.enabled);
+  document.getElementById('slot-modal-max-slots').value = Number(sr.max_transfer_slots || 50);
+  document.getElementById('slot-modal-buffer').value = Number(sr.slot_buffer ?? 2);
+  document.getElementById('slot-modal-pop-metric').value = sr.popularity_metric || 'combined';
+  document.getElementById('slot-modal-pop-weight').value = Number(sr.popularity_weight ?? 50);
+  document.getElementById('slot-modal-size-weight').value = Number(sr.size_weight ?? 50);
+  document.getElementById('slot-modal-cancel-dead').checked = sr.cancel_dead_or_completed !== false;
+  document.getElementById('slot-modal-max-retention-enabled').checked = sr.max_retention_enabled !== false;
+
+  const totalMaxHours = Number(sr.max_retention_hours ?? 336);
+  document.getElementById('slot-modal-max-days').value = Math.floor(totalMaxHours / 24);
+  document.getElementById('slot-modal-max-hours').value = Math.round(totalMaxHours % 24);
+
+  const trackersListEl = document.getElementById('slot-modal-trackers-list');
+  if (trackersListEl) {
+    const items = [];
+    if (appState.default_rule) {
+      items.push({
+        tracker_id: '__default__',
+        label: 'Default Fallback Rule (Unmatched Trackers)',
+        sub: 'Applies to transfers using the Global Fallback Rule',
+        checked: Boolean(appState.default_rule.slot_retention_enabled),
+        activeCount: null,
+      });
+    }
+    const sortedTrackers = (appState.trackers || [])
+      .slice()
+      .sort((a, b) =>
+        getTrackerDisplayName(a.tracker_id).localeCompare(getTrackerDisplayName(b.tracker_id))
+      );
+    sortedTrackers.forEach((t) => {
+      const label = getTrackerDisplayName(t.tracker_id);
+      items.push({
+        tracker_id: t.tracker_id,
+        label,
+        sub: label !== t.tracker_id ? t.tracker_id : (t.enabled ? 'Specific rule active' : 'Uses fallback rule'),
+        checked: Boolean(t.slot_retention_enabled),
+        activeCount: Number(t.matched_transfers_count || 0),
+      });
+    });
+
+    if (items.length === 0) {
+      trackersListEl.innerHTML =
+        '<div class="text-xs text-slate-500 italic py-2">No trackers discovered or configured yet.</div>';
+    } else {
+      trackersListEl.innerHTML = items
+        .map(
+          (item) => `
+          <label class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-teal-500/40 cursor-pointer transition">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <input
+                type="checkbox"
+                value="${escapeHtml(item.tracker_id)}"
+                ${item.checked ? 'checked' : ''}
+                class="slot-tracker-checkbox w-4 h-4 accent-teal-400 shrink-0"
+              />
+              <div class="min-w-0">
+                <div class="text-xs font-semibold text-white truncate">${escapeHtml(item.label)}</div>
+                <div class="text-[10px] text-slate-400 truncate font-mono">${escapeHtml(item.sub)}</div>
+              </div>
+            </div>
+            ${
+              item.activeCount !== null
+                ? `<span class="text-[10px] font-mono text-slate-400 shrink-0">${item.activeCount} active</span>`
+                : ''
+            }
+          </label>`
+        )
+        .join('');
+    }
+  }
+
+  updateSlotRetentionModalUI();
+  modal.classList.remove('hidden');
+
+  const body = document.getElementById('slot-retention-modal-body');
+  if (body) body.scrollTop = 0;
+}
+
+function closeSlotRetentionModal() {
+  const modal = document.getElementById('slot-retention-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function saveSlotRetentionModal() {
+  const enabled = Boolean(document.getElementById('slot-modal-enabled').checked);
+  const maxTransferSlots = Math.max(
+    1,
+    Math.min(1000, Math.round(Number(document.getElementById('slot-modal-max-slots').value) || 50))
+  );
+  const slotBuffer = Math.max(
+    0,
+    Math.min(500, Math.round(Number(document.getElementById('slot-modal-buffer').value) || 0))
+  );
+  const popularityMetric = document.getElementById('slot-modal-pop-metric').value || 'combined';
+  const popularityWeight = Math.max(
+    0,
+    Math.min(100, Number(document.getElementById('slot-modal-pop-weight').value ?? 50))
+  );
+  const sizeWeight = Math.max(
+    0,
+    Math.min(100, Number(document.getElementById('slot-modal-size-weight').value ?? 50))
+  );
+  const cancelDeadOrCompleted = Boolean(document.getElementById('slot-modal-cancel-dead').checked);
+  const maxRetentionEnabled = Boolean(
+    document.getElementById('slot-modal-max-retention-enabled').checked
+  );
+
+  const maxDays = Math.max(0, Number(document.getElementById('slot-modal-max-days').value) || 0);
+  const maxHoursPart = Math.max(0, Number(document.getElementById('slot-modal-max-hours').value) || 0);
+  const maxRetentionHours = Math.max(0.5, maxDays * 24 + maxHoursPart);
+
+  const selectedTrackerIds = [];
+  document.querySelectorAll('.slot-tracker-checkbox').forEach((chk) => {
+    if (chk.checked && chk.value) {
+      selectedTrackerIds.push(chk.value);
+    }
+  });
+
+  const payload = {
+    enabled,
+    max_transfer_slots: maxTransferSlots,
+    slot_buffer: slotBuffer,
+    popularity_metric: popularityMetric,
+    popularity_weight: popularityWeight,
+    size_weight: sizeWeight,
+    cancel_dead_or_completed: cancelDeadOrCompleted,
+    max_retention_enabled: maxRetentionEnabled,
+    max_retention_hours: maxRetentionHours,
+    selected_tracker_ids: selectedTrackerIds,
+  };
+
+  try {
+    const resp = await fetch('/api/slot-retention', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Failed to save slot retention settings');
+    updateUI(data);
+    closeSlotRetentionModal();
+    showToast('Global Slot-Based Retention settings saved!', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -2918,6 +3373,11 @@ document.addEventListener('keydown', (e) => {
     const confirmModal = document.getElementById('confirm-modal');
     if (confirmModal && !confirmModal.classList.contains('hidden')) {
       resolveConfirmModal(false);
+      return;
+    }
+    const slotModal = document.getElementById('slot-retention-modal');
+    if (slotModal && !slotModal.classList.contains('hidden')) {
+      closeSlotRetentionModal();
       return;
     }
     const ruleModal = document.getElementById('rule-modal');

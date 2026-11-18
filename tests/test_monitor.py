@@ -5,9 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app.models import AppConfig, TrackerRule
+from app.models import AppConfig, SlotRetentionConfig, TrackerRule
 from app.monitor import (
     TransferMonitorService,
+    apply_slot_retention,
+    compute_unified_retention_scores,
+    detect_dead_or_finished_transfer,
     evaluate_transfer_against_rule,
     find_matching_rule,
 )
@@ -389,6 +392,306 @@ class TestTrackerMonitor(unittest.TestCase):
         self.assertEqual(ev_queued_30h["notification_type"], "long_queued")
         self.assertEqual(ev_queued_30h["notification_label"], "Queued Too Long")
 
+    def test_slot_retention_weighted_score_and_eviction(self) -> None:
+        import json
+
+        # Verify backward compatibility when loading legacy config.json without slot_retention
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = Path(tmp) / "config.json"
+            cfg_path.write_text(
+                json.dumps(
+                    {
+                        "monitoring_enabled": True,
+                        "trackers": {
+                            "tracker.keep.org": {
+                                "tracker_id": "tracker.keep.org",
+                                "enabled": True,
+                                "use_time_rule": True,
+                                "max_time_minutes": 60.0,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded_store = ConfigStore(path=cfg_path)
+            loaded_cfg = loaded_store.get()
+            self.assertFalse(loaded_cfg.slot_retention.enabled)
+            self.assertEqual(loaded_cfg.slot_retention.max_transfer_slots, 50)
+            self.assertFalse(loaded_cfg.trackers["tracker.keep.org"].slot_retention_enabled)
+
+        rule_keep = TrackerRule(
+            tracker_id="tracker.keep.org",
+            enabled=True,
+            use_time_rule=True,
+            max_time_minutes=60.0,
+            slot_retention_enabled=True,
+        )
+        rule_drop = TrackerRule(
+            tracker_id="tracker.drop.org",
+            enabled=True,
+            use_time_rule=True,
+            max_time_minutes=60.0,
+            slot_retention_enabled=False,
+        )
+        cfg = AppConfig(
+            slot_retention=SlotRetentionConfig(
+                enabled=True,
+                max_transfer_slots=6,
+                slot_buffer=2,  # target_max_active = 4
+                popularity_metric="combined",
+                popularity_weight=50.0,
+                size_weight=50.0,
+                cancel_dead_or_completed=True,
+                max_retention_enabled=True,
+                max_retention_hours=336.0,
+            ),
+            trackers={
+                "tracker.keep.org": rule_keep,
+                "tracker.drop.org": rule_drop,
+            },
+        )
+
+        # Base active downloading transfer (1 slot)
+        t_dl = {"id": 1, "name": "Active.DL", "status": "DOWNLOADING", "size": 1000}
+        # Unselected tracker overtime (should cancel normally)
+        t_drop = {
+            "id": 2,
+            "name": "Drop.Me",
+            "status": "SEEDING",
+            "seconds_seeding": 7200,
+            "size": 10_000_000_000,
+            "uploaded": 50_000_000_000,
+            "up_speed": 500_000,
+            "current_ratio": 5.0,
+        }
+        # Selected tracker overtime candidates: high, mid, low weighted scores
+        t_high = {
+            "id": 3,
+            "name": "High.Score",
+            "status": "SEEDING",
+            "seconds_seeding": 7200,
+            "size": 50_000_000_000,
+            "uploaded": 100_000_000_000,
+            "up_speed": 2_000_000,
+            "current_ratio": 2.0,
+        }
+        t_mid = {
+            "id": 4,
+            "name": "Mid.Score",
+            "status": "SEEDING",
+            "seconds_seeding": 7200,
+            "size": 20_000_000_000,
+            "uploaded": 30_000_000_000,
+            "up_speed": 500_000,
+            "current_ratio": 1.5,
+        }
+        t_low = {
+            "id": 5,
+            "name": "Low.Score",
+            "status": "SEEDING",
+            "seconds_seeding": 7200,
+            "size": 500_000_000,
+            "uploaded": 100_000_000,
+            "up_speed": 1_000,
+            "current_ratio": 0.2,
+        }
+
+        transfers = [t_dl, t_drop, t_high, t_mid, t_low]
+        matched = {
+            1: ("tracker.keep.org", rule_keep),
+            2: ("tracker.drop.org", rule_drop),
+            3: ("tracker.keep.org", rule_keep),
+            4: ("tracker.keep.org", rule_keep),
+            5: ("tracker.keep.org", rule_keep),
+        }
+        evals = {
+            tid: evaluate_transfer_against_rule(t, matched[tid][1])
+            for t, tid in ((x, x["id"]) for x in transfers)
+        }
+
+        status = apply_slot_retention(transfers, evals, matched, cfg)
+        self.assertEqual(status["available_overtime_slots"], 3)
+        self.assertEqual(status["retained_count"], 3)
+        self.assertEqual(status["evicted_count"], 0)
+        # Unselected tracker still cancels
+        self.assertTrue(evals[2]["should_cancel"])
+        self.assertFalse(evals[2]["slot_retained"])
+        # All 3 selected transfers are retained and ranked High -> Mid -> Low
+        for tid in (3, 4, 5):
+            self.assertFalse(evals[tid]["should_cancel"])
+            self.assertTrue(evals[tid]["slot_retained"])
+        self.assertEqual(evals[3]["slot_rank"], 1)
+        self.assertEqual(evals[4]["slot_rank"], 2)
+        self.assertEqual(evals[5]["slot_rank"], 3)
+
+        # Now add 2 IN_QUEUE transfers: available_overtime_slots becomes 4 - 1 - 2 = 1!
+        t_q1 = {"id": 6, "name": "Queued.1", "status": "IN_QUEUE", "size": 1000}
+        t_q2 = {"id": 7, "name": "Queued.2", "status": "WAITING", "size": 1000}
+        transfers_queued = transfers + [t_q1, t_q2]
+        matched_q = {
+            **matched,
+            6: ("tracker.keep.org", rule_keep),
+            7: ("tracker.keep.org", rule_keep),
+        }
+        evals_q = {
+            t["id"]: evaluate_transfer_against_rule(t, matched_q[t["id"]][1])
+            for t in transfers_queued
+        }
+
+        status_q = apply_slot_retention(transfers_queued, evals_q, matched_q, cfg)
+        self.assertEqual(status_q["queued_count"], 2)
+        self.assertEqual(status_q["available_overtime_slots"], 1)
+        self.assertEqual(status_q["retained_count"], 1)
+        self.assertEqual(status_q["evicted_count"], 2)
+        # Only Rank #1 (t_high) stays retained; t_mid and t_low are evicted!
+        self.assertFalse(evals_q[3]["should_cancel"])
+        self.assertTrue(evals_q[3]["slot_retained"])
+        self.assertTrue(evals_q[4]["should_cancel"])
+        self.assertFalse(evals_q[4]["slot_retained"])
+        self.assertIn("Slot limit reached", evals_q[4]["reason"])
+        self.assertTrue(evals_q[5]["should_cancel"])
+        self.assertIn("Slot limit reached", evals_q[5]["reason"])
+
+        # Verify score weights can prioritize size vs popularity
+        size_heavy_cfg = cfg.slot_retention.model_copy(
+            update={"popularity_weight": 0.0, "size_weight": 100.0}
+        )
+        scores_size = compute_unified_retention_scores([t_high, t_low], size_heavy_cfg)
+        self.assertGreater(scores_size[3]["score"], scores_size[5]["score"])
+
+    def test_slot_retention_dead_tracker_and_completed_cleanup(self) -> None:
+        rule_keep = TrackerRule(
+            tracker_id="tracker.keep.org",
+            enabled=True,
+            use_time_rule=True,
+            max_time_minutes=60.0,
+            slot_retention_enabled=True,
+        )
+        cfg = AppConfig(
+            slot_retention=SlotRetentionConfig(
+                enabled=True,
+                max_transfer_slots=50,
+                slot_buffer=2,
+                cancel_dead_or_completed=True,
+            ),
+            trackers={"tracker.keep.org": rule_keep},
+        )
+
+        transfers = [
+            {"id": 10, "name": "Completed.One", "status": "COMPLETED", "seconds_seeding": 0, "size": 5_000_000},
+            {"id": 11, "name": "Finished.One", "status": "FINISHED", "seconds_seeding": 0, "size": 5_000_000},
+            {"id": 12, "name": "Error.One", "status": "ERROR", "seconds_seeding": 0, "size": 5_000_000},
+            {
+                "id": 13,
+                "name": "Unregistered.One",
+                "status": "SEEDING",
+                "seconds_seeding": 7200,
+                "size": 99_000_000_000,
+                "uploaded": 99_000_000_000,
+                "up_speed": 9_000_000,
+                "tracker_message": "Unregistered torrent",
+            },
+            {
+                "id": 14,
+                "name": "NotFound.One",
+                "status": "SEEDING",
+                "seconds_seeding": 7200,
+                "size": 50_000_000_000,
+                "error_message": "Torrent not found on tracker",
+            },
+            {
+                "id": 15,
+                "name": "Healthy.Seeder",
+                "status": "SEEDING",
+                "seconds_seeding": 7200,
+                "size": 10_000_000,
+                "up_speed": 1000,
+            },
+        ]
+        matched = {t["id"]: ("tracker.keep.org", rule_keep) for t in transfers}
+        evals = {
+            t["id"]: evaluate_transfer_against_rule(t, rule_keep) for t in transfers
+        }
+
+        status = apply_slot_retention(transfers, evals, matched, cfg)
+        self.assertEqual(status["retained_count"], 1)
+        for dead_id in (10, 11, 12, 13, 14):
+            self.assertTrue(evals[dead_id]["should_cancel"])
+            self.assertFalse(evals[dead_id]["slot_retained"])
+            self.assertTrue(detect_dead_or_finished_transfer(next(t for t in transfers if t["id"] == dead_id))[0])
+        self.assertIn("Unregistered torrent", evals[13]["reason"])
+        self.assertIn("Torrent not found", evals[14]["reason"])
+
+        self.assertFalse(evals[15]["should_cancel"])
+        self.assertTrue(evals[15]["slot_retained"])
+
+    def test_slot_retention_max_duration_cap(self) -> None:
+        rule_keep = TrackerRule(
+            tracker_id="tracker.keep.org",
+            enabled=True,
+            use_time_rule=True,
+            max_time_minutes=60.0,
+            slot_retention_enabled=True,
+        )
+        cfg = AppConfig(
+            slot_retention=SlotRetentionConfig(
+                enabled=True,
+                max_transfer_slots=50,
+                slot_buffer=2,
+                max_retention_enabled=True,
+                max_retention_hours=336.0,  # 14 days
+            ),
+            trackers={"tracker.keep.org": rule_keep},
+        )
+        t_10d = {
+            "id": 20,
+            "name": "Within.14d",
+            "status": "SEEDING",
+            "seconds_seeding": 10 * 86400,
+            "size": 10_000_000,
+        }
+        t_15d = {
+            "id": 21,
+            "name": "Over.14d",
+            "status": "SEEDING",
+            "seconds_seeding": 15 * 86400,
+            "size": 99_000_000,
+        }
+        matched = {20: ("tracker.keep.org", rule_keep), 21: ("tracker.keep.org", rule_keep)}
+        evals = {
+            20: evaluate_transfer_against_rule(t_10d, rule_keep),
+            21: evaluate_transfer_against_rule(t_15d, rule_keep),
+        }
+
+        status = apply_slot_retention([t_10d, t_15d], evals, matched, cfg)
+        self.assertEqual(status["retained_count"], 1)
+        self.assertFalse(evals[20]["should_cancel"])
+        self.assertTrue(evals[20]["slot_retained"])
+        self.assertEqual(evals[20]["target_seconds"], int(336 * 3600))
+
+        self.assertTrue(evals[21]["should_cancel"])
+        self.assertFalse(evals[21]["slot_retained"])
+        self.assertIn("Slot retention max cap reached", evals[21]["reason"])
+
+        # When max cap is disabled, the 15-day transfer is retained
+        cfg_unlimited = cfg.model_copy(
+            update={
+                "slot_retention": cfg.slot_retention.model_copy(
+                    update={"max_retention_enabled": False}
+                )
+            }
+        )
+        evals_u = {
+            20: evaluate_transfer_against_rule(t_10d, rule_keep),
+            21: evaluate_transfer_against_rule(t_15d, rule_keep),
+        }
+        status_u = apply_slot_retention([t_10d, t_15d], evals_u, matched, cfg_unlimited)
+        self.assertEqual(status_u["retained_count"], 2)
+        self.assertFalse(evals_u[21]["should_cancel"])
+        self.assertTrue(evals_u[21]["slot_retained"])
+        self.assertIsNone(evals_u[21]["target_seconds"])
+
 
 class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
     async def test_auto_discovery_and_cancellation(self) -> None:
@@ -468,6 +771,140 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
                     clean_after_cancel=True,
                 )
 
+    async def test_slot_retention_poll_once_integration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "config.json"
+            store = ConfigStore(path=cfg_path)
+            cfg = store.get()
+            cfg.putio_token = "test_token_123"
+            cfg.monitoring_enabled = True
+            cfg.slot_retention = SlotRetentionConfig(
+                enabled=True,
+                max_transfer_slots=4,
+                slot_buffer=1,  # target_max_active = 3
+                popularity_metric="combined",
+                popularity_weight=50.0,
+                size_weight=50.0,
+                cancel_dead_or_completed=True,
+                max_retention_enabled=True,
+                max_retention_hours=336.0,
+            )
+            cfg.trackers["tracker.keep.org"] = TrackerRule(
+                tracker_id="tracker.keep.org",
+                enabled=True,
+                use_time_rule=True,
+                max_time_minutes=60.0,
+                slot_retention_enabled=True,
+            )
+            cfg.trackers["tracker.drop.org"] = TrackerRule(
+                tracker_id="tracker.drop.org",
+                enabled=True,
+                use_time_rule=True,
+                max_time_minutes=60.0,
+                slot_retention_enabled=False,
+            )
+            store.save(cfg)
+
+            service = TransferMonitorService(store=store)
+
+            poll1_transfers = [
+                {
+                    "id": 2001,
+                    "name": "Keep.High",
+                    "status": "SEEDING",
+                    "seconds_seeding": 7200,
+                    "size": 50_000_000_000,
+                    "uploaded": 50_000_000_000,
+                    "up_speed": 1_000_000,
+                    "current_ratio": 1.0,
+                    "tracker": "https://tracker.keep.org/announce",
+                },
+                {
+                    "id": 2002,
+                    "name": "Keep.Low",
+                    "status": "SEEDING",
+                    "seconds_seeding": 7200,
+                    "size": 500_000_000,
+                    "uploaded": 100_000_000,
+                    "up_speed": 500,
+                    "current_ratio": 0.2,
+                    "tracker": "https://tracker.keep.org/announce",
+                },
+                {
+                    "id": 2003,
+                    "name": "Keep.Dead",
+                    "status": "SEEDING",
+                    "seconds_seeding": 7200,
+                    "size": 90_000_000_000,
+                    "tracker_message": "Unregistered torrent",
+                    "tracker": "https://tracker.keep.org/announce",
+                },
+                {
+                    "id": 2004,
+                    "name": "Drop.Unselected",
+                    "status": "SEEDING",
+                    "seconds_seeding": 7200,
+                    "size": 90_000_000_000,
+                    "tracker": "https://tracker.drop.org/announce",
+                },
+            ]
+
+            with patch(
+                "app.monitor.PutioClient.list_transfers",
+                new_callable=AsyncMock,
+                return_value=poll1_transfers,
+            ), patch(
+                "app.monitor.PutioClient.get_account_info",
+                new_callable=AsyncMock,
+                return_value={"username": "tester"},
+            ), patch(
+                "app.monitor.PutioClient.cancel_and_remove_transfer",
+                new_callable=AsyncMock,
+            ) as mock_cancel:
+                res1 = await service.poll_once(execute_cancellations=True)
+                self.assertTrue(res1["ok"])
+                canceled_ids_1 = {c["transfer_id"] for c in res1["canceled"]}
+                # 2003 (dead tracker) and 2004 (unselected tracker) canceled; 2001 & 2002 retained!
+                self.assertEqual(canceled_ids_1, {2003, 2004})
+                self.assertEqual(res1["slot_status"]["retained_count"], 2)
+                self.assertEqual(mock_cancel.await_count, 2)
+
+            # Next poll: 2001 & 2002 remain, plus 2 IN_QUEUE transfers appear -> only 3 - 0 - 2 = 1 slot left!
+            poll2_transfers = [
+                poll1_transfers[0],
+                poll1_transfers[1],
+                {
+                    "id": 2005,
+                    "name": "New.Queued.1",
+                    "status": "IN_QUEUE",
+                    "size": 1_000_000,
+                    "tracker": "https://tracker.keep.org/announce",
+                },
+                {
+                    "id": 2006,
+                    "name": "New.Queued.2",
+                    "status": "WAITING",
+                    "size": 1_000_000,
+                    "tracker": "https://tracker.keep.org/announce",
+                },
+            ]
+            with patch(
+                "app.monitor.PutioClient.list_transfers",
+                new_callable=AsyncMock,
+                return_value=poll2_transfers,
+            ), patch(
+                "app.monitor.PutioClient.cancel_and_remove_transfer",
+                new_callable=AsyncMock,
+            ) as mock_cancel2:
+                res2 = await service.poll_once(execute_cancellations=True)
+                self.assertTrue(res2["ok"])
+                canceled_ids_2 = {c["transfer_id"] for c in res2["canceled"]}
+                # Lowest-scored retained transfer (2002) is evicted to make room; 2001 remains retained!
+                self.assertEqual(canceled_ids_2, {2002})
+                self.assertEqual(res2["slot_status"]["retained_count"], 1)
+                self.assertEqual(res2["slot_status"]["evicted_count"], 1)
+                mock_cancel2.assert_awaited_once()
+
     async def test_fastapi_endpoints(self) -> None:
         import httpx
         from app.main import app, store
@@ -483,6 +920,8 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r_state.status_code, 200)
             state_json = r_state.json()
             self.assertIn("trackers", state_json)
+            self.assertIn("slot_retention", state_json)
+            self.assertIn("slot_status", state_json)
             self.assertIn("pin_transfers_header", state_json["settings"])
             self.assertIn("log_retention_days", state_json["settings"])
 
@@ -564,6 +1003,61 @@ class TestMonitorServiceAsync(unittest.IsolatedAsyncioTestCase):
                 [("custom.tracker.org", "udp://custom.tracker.org:1337")], cfg_now
             )
             self.assertEqual(matched_r.tracker_id, "__default__")
+
+            # Test slot_retention_enabled on /api/trackers (allowed as sole condition when enabled)
+            r_slot_tracker = await client.post(
+                "/api/trackers",
+                json={
+                    "tracker_id": "slotonly.tracker.org",
+                    "display_name": "Slot Only Tracker",
+                    "enabled": True,
+                    "use_time_rule": False,
+                    "use_ratio_rule": False,
+                    "slot_retention_enabled": True,
+                },
+            )
+            self.assertEqual(r_slot_tracker.status_code, 200)
+            slot_trackers = {
+                t["tracker_id"]: t for t in r_slot_tracker.json()["trackers"]
+            }
+            self.assertTrue(slot_trackers["slotonly.tracker.org"]["slot_retention_enabled"])
+
+            # Verify PUT /api/slot-retention updates config and bulk-selects trackers
+            r_sr = await client.put(
+                "/api/slot-retention",
+                json={
+                    "enabled": True,
+                    "max_transfer_slots": 50,
+                    "slot_buffer": 3,
+                    "popularity_metric": "up_speed",
+                    "popularity_weight": 60.0,
+                    "size_weight": 40.0,
+                    "cancel_dead_or_completed": True,
+                    "max_retention_enabled": True,
+                    "max_retention_hours": 336.0,
+                    "selected_tracker_ids": ["custom.tracker.org", "__default__"],
+                },
+            )
+            self.assertEqual(r_sr.status_code, 200)
+            sr_json = r_sr.json()
+            self.assertTrue(sr_json["slot_retention"]["enabled"])
+            self.assertEqual(sr_json["slot_retention"]["slot_buffer"], 3)
+            self.assertEqual(sr_json["slot_retention"]["popularity_metric"], "up_speed")
+            self.assertTrue(sr_json["default_rule"]["slot_retention_enabled"])
+            sr_trackers = {t["tracker_id"]: t for t in sr_json["trackers"]}
+            self.assertTrue(sr_trackers["custom.tracker.org"]["slot_retention_enabled"])
+            self.assertFalse(sr_trackers["slotonly.tracker.org"]["slot_retention_enabled"])
+
+            # Restore clean state
+            await client.put(
+                "/api/slot-retention",
+                json={
+                    "enabled": False,
+                    "slot_buffer": 2,
+                    "selected_tracker_ids": [],
+                },
+            )
+            await client.delete("/api/trackers/slotonly.tracker.org")
 
 
 if __name__ == "__main__":

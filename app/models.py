@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 ConditionOperator = Literal["OR", "AND"]
 TopSeededMetric = Literal["up_speed", "uploaded", "ratio"]
+SlotPopularityMetric = Literal["combined", "up_speed", "uploaded", "ratio"]
 
 PUTWATCH_APP_NAME = "PutWatch"
 PUTWATCH_REPO_URL = "https://github.com/ben68165/PutWatch"
@@ -133,6 +134,11 @@ class TrackerRule(BaseModel):
         ge=0.1,
         description="Hours (days * 24 + hours) after which a queued transfer is highlighted at the top.",
     )
+    # Global Slot-Based Retention participation
+    slot_retention_enabled: bool = Field(
+        default=False,
+        description="Whether transfers matching this tracker rule are eligible for global slot-based retention.",
+    )
     # Discovery metadata
     discovered_from_transfers: bool = Field(
         default=True,
@@ -146,6 +152,56 @@ class TrackerRule(BaseModel):
     last_seen_at: Optional[str] = Field(default=None)
     matched_transfers_count: int = Field(default=0)
     canceled_transfers_count: int = Field(default=0)
+
+
+class SlotRetentionConfig(BaseModel):
+    """Global slot-based retention configuration evaluated across all Put.io transfers."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch for global slot-based transfer retention.",
+    )
+    max_transfer_slots: int = Field(
+        default=50,
+        ge=1,
+        le=1000,
+        description="Maximum simultaneous transfers allowed by the user's Put.io plan.",
+    )
+    slot_buffer: int = Field(
+        default=2,
+        ge=0,
+        le=500,
+        description="Number of transfer slots to keep free as a buffer so new transfers start immediately.",
+    )
+    popularity_metric: SlotPopularityMetric = Field(
+        default="combined",
+        description="Metric used for the popularity component of the unified retention score.",
+    )
+    popularity_weight: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        description="Weight (0-100) for popularity in the unified retention score.",
+    )
+    size_weight: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        description="Weight (0-100) for file size in the unified retention score.",
+    )
+    cancel_dead_or_completed: bool = Field(
+        default=True,
+        description="Immediately cancel and remove transfers on selected trackers that are COMPLETED, FINISHED, ERROR, or unregistered/removed on the tracker.",
+    )
+    max_retention_enabled: bool = Field(
+        default=True,
+        description="Whether to enforce a maximum seeding time cap on slot-retained transfers.",
+    )
+    max_retention_hours: float = Field(
+        default=336.0,
+        ge=0.5,
+        description="Maximum hours (e.g. 336h = 14 days) to retain a transfer via slot retention before canceling.",
+    )
 
 
 class ActivityLogEntry(BaseModel):
@@ -233,6 +289,10 @@ class AppConfig(BaseModel):
         default_factory=dict,
         description="Map of tracker_id -> TrackerRule.",
     )
+    slot_retention: SlotRetentionConfig = Field(
+        default_factory=SlotRetentionConfig,
+        description="Global slot-based transfer retention configuration.",
+    )
     activity_log: List[ActivityLogEntry] = Field(
         default_factory=list,
         description="Recent cancellation events (most recent first).",
@@ -277,3 +337,17 @@ class TrackerRuleUpdateRequest(BaseModel):
     cancel_stalled_download_hours: float = Field(default=24.0, ge=0.1)
     notify_long_queued_enabled: bool = False
     notify_long_queued_hours: float = Field(default=6.0, ge=0.1)
+    slot_retention_enabled: Optional[bool] = None
+
+
+class SlotRetentionUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    max_transfer_slots: Optional[int] = Field(default=None, ge=1, le=1000)
+    slot_buffer: Optional[int] = Field(default=None, ge=0, le=500)
+    popularity_metric: Optional[SlotPopularityMetric] = None
+    popularity_weight: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    size_weight: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    cancel_dead_or_completed: Optional[bool] = None
+    max_retention_enabled: Optional[bool] = None
+    max_retention_hours: Optional[float] = Field(default=None, ge=0.5)
+    selected_tracker_ids: Optional[List[str]] = None

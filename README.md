@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ben68165/PutWatch/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/Release-v1.0.2-amber.svg?style=flat-square" alt="Version 1.0.2" /></a>
+  <a href="https://github.com/ben68165/PutWatch/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/Release-v1.1.0-amber.svg?style=flat-square" alt="Version 1.1.0" /></a>
   <a href="https://hub.docker.com/"><img src="https://img.shields.io/badge/Docker-Ready-0db7ed.svg?style=flat-square&logo=docker&logoColor=white" alt="Docker Ready" /></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-10b981.svg?style=flat-square" alt="License MIT" /></a>
@@ -96,6 +96,19 @@ Connecting PutWatch to your Put.io account takes less than 10 seconds. No develo
 - **Instant 1-Click Device Link**: Click **Generate PutWatch Device Code** and approve it instantly at [app.put.io/link](https://app.put.io/link).
 - **Flexible Polling Interval**: Adjust scan frequency from every 1 minute to once an hour.
 - **Auto-Cleanup**: Automatically cleans completed entries from Put.io's active list while leaving files untouched.
+
+---
+
+### 6. Global Slot-Based Retention (Capacity Keep-Alive)
+Don't waste unused simultaneous transfer slots on your Put.io plan. PutWatch can keep high-value seeding transfers from selected trackers alive beyond their normal per-tracker limits whenever slots are free, while immediately reclaiming space when new downloads queue.
+
+![Global Slot-Based Retention Capacity Meter](./docs/screenshots/feature_slot_retention.png)
+
+- **Live Put.io Slot Usage Meter**: Real-time segmented bar tracking `Base Active`, `Slot-Retained`, `Queued`, `Reserved Buffer`, and `Free Overtime Capacity` against your Put.io plan's simultaneous transfer limit.
+- **Buffer + Queue-Triggered Eviction**: Keeps slots filled up to `(Max Slots - Buffer)` and automatically evicts the lowest-ranked overtime transfers whenever `IN_QUEUE` / `WAITING` transfers appear.
+- **Unified Weighted Score (Popularity + File Size)**: Ranks overtime seeding candidates globally across your chosen trackers by combining popularity (`Combined`, `Upload Speed`, `Uploaded Bytes`, or `Share Ratio`) with file size using customizable weights.
+- **Dead & Completed Auto-Cleanup**: Transfers on selected trackers with status `COMPLETED`, `FINISHED`, `ERROR`, or unregistered/removed tracker messages are never kept in overtime slots and are removed immediately.
+- **Optional Maximum Overtime Cap**: Enforce a global maximum seeding cap (e.g., 14 days to match Put.io's seeding window) or disable it for unlimited retention while slots remain free.
 
 ---
 
